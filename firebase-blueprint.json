@@ -1,0 +1,165 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Inventory product entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "category": { "type": "string" },
+        "supplier": { "type": "string" },
+        "costPrice": { "type": "number" },
+        "salePrice": { "type": "number" },
+        "vatRate": { "type": "number" },
+        "stock": { "type": "number" },
+        "minStock": { "type": "number" },
+        "emoji": { "type": "string" },
+        "expiryDate": { "type": "string" }
+      },
+      "required": ["id", "name", "code", "costPrice", "salePrice", "stock"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer register",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "nuit": { "type": "string" },
+        "totalSpent": { "type": "number" },
+        "purchaseCount": { "type": "number" },
+        "lastPurchaseDate": { "type": "string" },
+        "debt": { "type": "number" },
+        "loyaltyPoints": { "type": "number" }
+      },
+      "required": ["id", "name", "phone"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "User or employee entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "contact": { "type": "string" },
+        "salary": { "type": "number" },
+        "admissionDate": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "name", "role"]
+    },
+    "CashFlowEntry": {
+      "title": "CashFlowEntry",
+      "description": "Cash register transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "type": { "type": "string" },
+        "amount": { "type": "number" },
+        "reason": { "type": "string" },
+        "responsibleUser": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "type", "amount", "reason", "responsibleUser"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "System event audit trail",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "user": { "type": "string" },
+        "userRole": { "type": "string" },
+        "action": { "type": "string" },
+        "module": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "user", "action", "module"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "General settings of the enterprise",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string" },
+        "companyAddress": { "type": "string" },
+        "companyNuit": { "type": "string" },
+        "vatDefaultRate": { "type": "number" },
+        "currency": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "autoBackup": { "type": "boolean" },
+        "smsGateway": { "type": "string" },
+        "smtpServer": { "type": "string" },
+        "reportRecipientEmail": { "type": "string" },
+        "reportHour": { "type": "string" },
+        "reportFrequency": { "type": "string" },
+        "slogan": { "type": "string" },
+        "storeAddress": { "type": "string" },
+        "storeContact": { "type": "string" },
+        "defaultVat": { "type": "number" },
+        "cloudBackupEnabled": { "type": "boolean" },
+        "backupFrequency": { "type": "string" },
+        "backupCron": { "type": "string" },
+        "backupTime": { "type": "string" },
+        "cloudProvider": { "type": "string" }
+      }
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "POS complete sales receipt transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "vatTotal": { "type": "number" },
+        "discountTotal": { "type": "number" },
+        "grandTotal": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "customerName": { "type": "string" },
+        "nuit": { "type": "string" },
+        "items": { "type": "array" }
+      },
+      "required": ["id", "invoiceNumber", "timestamp", "subtotal", "grandTotal", "paymentMethod", "cashierName"]
+    }
+  },
+  "firestore": {
+    "/products": {
+      "schema": "Product",
+      "description": "Inventory list"
+    },
+    "/customers": {
+      "schema": "Customer",
+      "description": "Customer accounts"
+    },
+    "/employees": {
+      "schema": "Employee",
+      "description": "Registered staff profiles"
+    },
+    "/cashflow": {
+      "schema": "CashFlowEntry",
+      "description": "Cash register flow ledger"
+    },
+    "/auditlogs": {
+      "schema": "AuditLog",
+      "description": "History of administrator and cashier activity logs"
+    },
+    "/transactions": {
+      "schema": "Transaction",
+      "description": "Vendas sales orders invoices"
+    },
+    "/settings/config": {
+      "schema": "SystemSettings",
+      "description": "Enterprise wide global configurations"
+    }
+  }
+}

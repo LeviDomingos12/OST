@@ -1,0 +1,168 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;650;700&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;650;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Base resets & scrollbars */
+body {
+  font-family: var(--font-sans);
+  background-color: #f8fafc;
+  color: #1e293b;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+body.dark {
+  background-color: #09090b !important; /* zinc-950 */
+  color: #e4e4e7 !important; /* zinc-200 */
+}
+
+h1, h2, h3, h4, th {
+  font-family: "Space Grotesk", var(--font-sans);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #09090b;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Global Component Styling Overrides mapped to Elegant Dark theme */
+
+/* Main canvas background mappings */
+.dark .bg-slate-50, .dark .bg-slate-100/30, .dark .bg-slate-50/50, .dark .bg-slate-100\/30, .dark .bg-slate-50\/50, .dark [class*="bg-slate-50"] {
+  background-color: #09090b !important;
+}
+
+/* Card overrides */
+.dark .bg-white, .dark [class*="bg-white"] {
+  background-color: #18181b !important; /* zinc-900 */
+}
+
+/* Border overrides */
+.dark .border-slate-200, .dark .border-slate-100, .dark .border-slate-300/40, .dark .border-slate-200/50, .dark .border-slate-100/60 {
+  border-color: #27272a !important; /* zinc-800 */
+}
+
+/* Side navigation background overrides to zinc-900 */
+.dark aside {
+  background-color: #18181b !important;
+  border-color: #27272a !important;
+}
+
+/* Headers */
+.dark header {
+  background-color: rgba(9, 9, 11, 0.75) !important;
+  backdrop-filter: blur(12px);
+  border-color: #27272a !important;
+}
+
+/* Input, Selector and Form fields */
+.dark input, .dark select, .dark textarea {
+  background-color: #09090b !important;
+  border-color: #27272a !important;
+  color: #f4f4f5 !important;
+}
+.dark input::placeholder, .dark textarea::placeholder {
+  color: #71717a !important;
+}
+.dark input:focus, .dark select:focus, .dark textarea:focus {
+  border-color: #f59e0b !important; /* amber-500 */
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2) !important;
+}
+
+/* Table overrides */
+.dark th {
+  background-color: #09090b !important;
+  color: #a1a1aa !important;
+  border-color: #27272a !important;
+}
+
+.dark td {
+  border-color: #181c24 !important;
+  color: #e4e4e7 !important;
+}
+
+.dark tr:hover td {
+  background-color: rgba(39, 39, 42, 0.3) !important;
+}
+
+/* Zebra strips */
+.dark .even\:bg-slate-50\/50:nth-child(even), .dark .even\:bg-slate-50:nth-child(even), .dark .odd\:bg-slate-50\/50:nth-child(odd) {
+  background-color: rgba(24, 24, 27, 0.4) !important;
+}
+
+/* Typography Overrides */
+.dark .text-slate-800, .dark .text-slate-900, .dark .text-slate-750, .dark .text-slate-850, .dark .text-slate-700 {
+  color: #f4f4f5 !important; /* zinc-100 */
+}
+
+.dark .text-slate-600, .dark .text-slate-650 {
+  color: #d4d4d8 !important; /* zinc-300 */
+}
+
+.dark .text-slate-500, .dark .text-slate-400 {
+  color: #a1a1aa !important; /* zinc-400 */
+}
+
+/* Accent mappings: orange-500 and orange-600 tags transition gracefully to amber-500 */
+.dark .bg-orange-500, .dark .hover\:bg-orange-600:hover, .dark .bg-orange-600 {
+  background-color: #f59e0b !important; /* amber-500 */
+  color: #09090b !important;
+  font-weight: 700 !important;
+}
+.dark .bg-orange-500:hover {
+  background-color: #d97706 !important; /* amber-600 */
+}
+
+.dark .text-orange-500, .dark .text-orange-600 {
+  color: #fbbf24 !important; /* amber-450 */
+}
+
+.dark .bg-orange-50, .dark .bg-orange-100 {
+  background-color: rgba(245, 158, 11, 0.1) !important;
+  color: #fbbf24 !important;
+}
+
+/* Alert Boxes & highlights */
+.dark .bg-red-50, .dark .bg-red-50\/50 {
+  background-color: rgba(239, 68, 68, 0.08) !important;
+}
+.dark .bg-emerald-50, .dark .bg-emerald-50\/50 {
+  background-color: rgba(16, 185, 129, 0.08) !important;
+}
+.dark .bg-blue-50, .dark .bg-blue-50\/50 {
+  background-color: rgba(59, 130, 246, 0.08) !important;
+}
+
+/* Modals, popups & dropdowns */
+.dark .modal-content, .dark .shadow-2xl, .dark .shadow-xl {
+  background-color: #18181b !important;
+  border: 1px solid #27272a !important;
+}
+
+/* Cart highlights, POS details layout */
+.dark .divide-y > * + * {
+  border-color: #27272a !important;
+}
+
+/* Charts Tooltips customized for dark mode */
+.dark .recharts-default-tooltip {
+  background-color: #18181b !important;
+  border: 1px solid #27272a !important;
+}
+.dark .recharts-tooltip-label {
+  color: #f4f4f5 !important;
+}
+
