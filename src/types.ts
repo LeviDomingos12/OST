@@ -21,6 +21,11 @@ export interface Product {
   expiryDate?: string;
   image?: string;
   emoji?: string;
+  promotion?: string; // e.g. "PROMO", "MAIS_VENDIDO", "NOVO", "DESCONTO"
+  isFavorite?: boolean;
+  brand?: string;
+  weightBased?: boolean; // True if sold per kg
+  barcode?: string;
 }
 
 export interface CartItem {
@@ -97,7 +102,7 @@ export interface Employee {
   contact: string;
   salary: number;
   admissionDate: string;
-  status: "ACTIVE" | "INACTIVE";
+  status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
 }
 
 export interface SystemSettings {
@@ -132,6 +137,12 @@ export interface SystemSettings {
   emolaApiKey?: string;
   emolaSecret?: string;
   emolaWebhookUrl?: string;
+  whatsappEnabled?: boolean;
+  whatsappProvider?: "DIRECT_LINK" | "EVOLUTION_API" | "TWILIO" | "META_CLOUD";
+  whatsappApiEndpoint?: string;
+  whatsappToken?: string;
+  whatsappPhoneId?: string;
+  managerWhatsappPhone?: string;
 }
 
 export interface MasterclassVideo {

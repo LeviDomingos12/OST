@@ -1,6 +1,9 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Global rule to allow full read and write access.
+    // This allows both authenticated client-side operations and our full-stack backend
+    // server (running without user context) to sync data smoothly in this development environment.
     match /{document=**} {
       allow read, write: if true;
     }

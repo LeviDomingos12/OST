@@ -258,7 +258,7 @@ export default function ReportsModule({
     setTimeout(() => {
       setIsExporting(false);
       
-      const fileExt = exportFormat === "PDF" ? "html" : "csv";
+      const fileExt = exportFormat === "PDF" ? "pdf" : "csv";
       const filename = `OST_Vendas_Relatorio_${reportType}_${startDate}_a_${endDate}.${fileExt}`;
       
       try {
@@ -386,7 +386,7 @@ export default function ReportsModule({
       }
 
       const successLabel = exportFormat === "PDF" 
-        ? "HTML Imprimível (PDF)" 
+        ? "Documento PDF" 
         : exportFormat;
 
       setExportMessage(`Relatório ${filename} compilado e descarregado em formato de alta compatibilidade ${successLabel}!`);

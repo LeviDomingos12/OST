@@ -11,7 +11,8 @@ import {
   Settings, 
   Lock,
   ChevronDown,
-  Smartphone
+  Smartphone,
+  LogOut
 } from "lucide-react";
 import { UserRole, UserProfile } from "../types";
 
@@ -21,6 +22,7 @@ interface SidebarProps {
   activeModule: string;
   onChangeModule: (module: string) => void;
   companyName: string;
+  onLogout?: () => void;
 }
 
 export default function Sidebar({
@@ -28,7 +30,8 @@ export default function Sidebar({
   onChangeRole,
   activeModule,
   onChangeModule,
-  companyName
+  companyName,
+  onLogout
 }: SidebarProps) {
   
   const profiles: UserProfile[] = [
@@ -147,6 +150,18 @@ export default function Sidebar({
             </button>
           );
         })}
+
+        {onLogout && (
+          <div className="pt-2 mt-4 border-t border-zinc-800/80">
+            <button
+              onClick={onLogout}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-bold text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all cursor-pointer"
+            >
+              <LogOut className="w-4 h-4 shrink-0 text-red-500" />
+              <span>Terminar Sessão 🔒</span>
+            </button>
+          </div>
+        )}
       </nav>
 
       {/* Footer Branding Area */}

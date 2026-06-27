@@ -1,165 +1,197 @@
 {
   "entities": {
-    "Product": {
-      "title": "Product",
-      "description": "Inventory product entry",
+    "usuario": {
+      "title": "Usuario",
+      "description": "User profile and authorization details synchronized with Firebase Auth",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Unique Firebase Authentication User UID"
+        },
+        "nomeCompleto": {
+          "type": "string",
+          "description": "Display name of the user"
+        },
+        "email": {
+          "type": "string",
+          "description": "The registered email address"
+        },
+        "empresa": {
+          "type": "string",
+          "description": "The active branch or company associated"
+        },
+        "perfil": {
+          "type": "string",
+          "enum": ["Administrador", "Gerente", "Supervisor", "Caixa", "Estoquista", "Vendedor", "Financeiro"],
+          "description": "Assigned access role in ERP"
+        },
+        "cargo": {
+          "type": "string",
+          "description": "Job title or position description"
+        },
+        "estado": {
+          "type": "string",
+          "enum": ["Ativo", "Inativo"],
+          "description": "Account status (blocking inactive users)"
+        },
+        "fotoPerfil": {
+          "type": "string",
+          "description": "URL to profile photo"
+        },
+        "telefone": {
+          "type": "string",
+          "description": "User contact telephone number"
+        },
+        "ultimoLogin": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last login event"
+        },
+        "dataCriacao": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The timestamp of user account registration"
+        }
+      },
+      "required": ["uid", "nomeCompleto", "email", "empresa", "perfil", "estado", "dataCriacao"]
+    },
+    "empresa": {
+      "title": "Empresa",
+      "description": "Branch or firm definition in multi-branch scope",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Branch unique code identifier"
+        },
+        "nome": {
+          "type": "string",
+          "description": "Branch name"
+        },
+        "nuit": {
+          "type": "string",
+          "description": "Mozambican Tax Identification Number (NUIT)"
+        },
+        "endereco": {
+          "type": "string",
+          "description": "Physical address"
+        }
+      },
+      "required": ["id", "nome"]
+    },
+    "log": {
+      "title": "Log",
+      "description": "Comprehensive security and operations audit log entries",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique log entry ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of the actor"
+        },
+        "userName": {
+          "type": "string",
+          "description": "Name of the actor"
+        },
+        "action": {
+          "type": "string",
+          "description": "Operation action name"
+        },
+        "module": {
+          "type": "string",
+          "description": "System module involved"
+        },
+        "details": {
+          "type": "string",
+          "description": "Extended contextual details of the action"
+        },
+        "device": {
+          "type": "string",
+          "description": "Detected device user agent details"
+        },
+        "ip": {
+          "type": "string",
+          "description": "Client IP address when available"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Action logged timestamp"
+        }
+      },
+      "required": ["id", "action", "module", "timestamp"]
+    },
+    "produto": {
+      "title": "Produto",
+      "description": "Product inventory item",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
         "code": { "type": "string" },
         "category": { "type": "string" },
-        "supplier": { "type": "string" },
         "costPrice": { "type": "number" },
         "salePrice": { "type": "number" },
-        "vatRate": { "type": "number" },
         "stock": { "type": "number" },
         "minStock": { "type": "number" },
+        "vatRate": { "type": "number" },
+        "supplier": { "type": "string" },
         "emoji": { "type": "string" },
-        "expiryDate": { "type": "string" }
+        "brand": { "type": "string" },
+        "barcode": { "type": "string" },
+        "isFavorite": { "type": "boolean" },
+        "weightBased": { "type": "boolean" },
+        "promotion": { "type": "string" },
+        "image": { "type": "string" }
       },
-      "required": ["id", "name", "code", "costPrice", "salePrice", "stock"]
+      "required": ["id", "name", "code", "category", "costPrice", "salePrice", "stock"]
     },
-    "Customer": {
-      "title": "Customer",
-      "description": "Customer register",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "phone": { "type": "string" },
-        "email": { "type": "string" },
-        "address": { "type": "string" },
-        "nuit": { "type": "string" },
-        "totalSpent": { "type": "number" },
-        "purchaseCount": { "type": "number" },
-        "lastPurchaseDate": { "type": "string" },
-        "debt": { "type": "number" },
-        "loyaltyPoints": { "type": "number" }
-      },
-      "required": ["id", "name", "phone"]
-    },
-    "Employee": {
-      "title": "Employee",
-      "description": "User or employee entry",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "role": { "type": "string" },
-        "contact": { "type": "string" },
-        "salary": { "type": "number" },
-        "admissionDate": { "type": "string" },
-        "status": { "type": "string" }
-      },
-      "required": ["id", "name", "role"]
-    },
-    "CashFlowEntry": {
-      "title": "CashFlowEntry",
-      "description": "Cash register transaction",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "timestamp": { "type": "string" },
-        "type": { "type": "string" },
-        "amount": { "type": "number" },
-        "reason": { "type": "string" },
-        "responsibleUser": { "type": "string" }
-      },
-      "required": ["id", "timestamp", "type", "amount", "reason", "responsibleUser"]
-    },
-    "AuditLog": {
-      "title": "AuditLog",
-      "description": "System event audit trail",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "timestamp": { "type": "string" },
-        "user": { "type": "string" },
-        "userRole": { "type": "string" },
-        "action": { "type": "string" },
-        "module": { "type": "string" },
-        "details": { "type": "string" }
-      },
-      "required": ["id", "timestamp", "user", "action", "module"]
-    },
-    "SystemSettings": {
-      "title": "SystemSettings",
-      "description": "General settings of the enterprise",
-      "type": "object",
-      "properties": {
-        "companyName": { "type": "string" },
-        "companyAddress": { "type": "string" },
-        "companyNuit": { "type": "string" },
-        "vatDefaultRate": { "type": "number" },
-        "currency": { "type": "string" },
-        "logoUrl": { "type": "string" },
-        "autoBackup": { "type": "boolean" },
-        "smsGateway": { "type": "string" },
-        "smtpServer": { "type": "string" },
-        "reportRecipientEmail": { "type": "string" },
-        "reportHour": { "type": "string" },
-        "reportFrequency": { "type": "string" },
-        "slogan": { "type": "string" },
-        "storeAddress": { "type": "string" },
-        "storeContact": { "type": "string" },
-        "defaultVat": { "type": "number" },
-        "cloudBackupEnabled": { "type": "boolean" },
-        "backupFrequency": { "type": "string" },
-        "backupCron": { "type": "string" },
-        "backupTime": { "type": "string" },
-        "cloudProvider": { "type": "string" }
-      }
-    },
-    "Transaction": {
-      "title": "Transaction",
-      "description": "POS complete sales receipt transaction",
+    "transacao": {
+      "title": "Transacao",
+      "description": "Sales receipt or checkout transaction document",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "invoiceNumber": { "type": "string" },
-        "timestamp": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
         "subtotal": { "type": "number" },
         "vatTotal": { "type": "number" },
         "discountTotal": { "type": "number" },
         "grandTotal": { "type": "number" },
         "paymentMethod": { "type": "string" },
         "cashierName": { "type": "string" },
+        "customerId": { "type": "string" },
         "customerName": { "type": "string" },
         "nuit": { "type": "string" },
-        "items": { "type": "array" }
+        "paymentDetails": { "type": "string" }
       },
-      "required": ["id", "invoiceNumber", "timestamp", "subtotal", "grandTotal", "paymentMethod", "cashierName"]
+      "required": ["id", "invoiceNumber", "subtotal", "vatTotal", "discountTotal", "grandTotal", "paymentMethod", "cashierName"]
     }
   },
   "firestore": {
-    "/products": {
-      "schema": "Product",
-      "description": "Inventory list"
+    "usuarios/{uid}": {
+      "schema": "usuario",
+      "description": "User account documents synchronized to Firebase Auth"
     },
-    "/customers": {
-      "schema": "Customer",
-      "description": "Customer accounts"
+    "empresas/{empresaId}": {
+      "schema": "empresa",
+      "description": "Multi-company and branch configurations"
     },
-    "/employees": {
-      "schema": "Employee",
-      "description": "Registered staff profiles"
+    "logs/{logId}": {
+      "schema": "log",
+      "description": "Consolidated security and operation audit logs"
     },
-    "/cashflow": {
-      "schema": "CashFlowEntry",
-      "description": "Cash register flow ledger"
+    "produtos/{produtoId}": {
+      "schema": "produto",
+      "description": "Active sales inventory items"
     },
-    "/auditlogs": {
-      "schema": "AuditLog",
-      "description": "History of administrator and cashier activity logs"
-    },
-    "/transactions": {
-      "schema": "Transaction",
-      "description": "Vendas sales orders invoices"
-    },
-    "/settings/config": {
-      "schema": "SystemSettings",
-      "description": "Enterprise wide global configurations"
+    "transacoes/{transacaoId}": {
+      "schema": "transacao",
+      "description": "Sales invoices and receipts records"
     }
   }
 }

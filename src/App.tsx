@@ -33,7 +33,24 @@ import ReportsModule from "./components/ReportsModule";
 import TrainingModule from "./components/TrainingModule";
 import SettingsModule from "./components/SettingsModule";
 import GatewayModule from "./components/GatewayModule";
-import { testConnection } from "./lib/firebase";
+import LoginModule from "./components/LoginModule";
+import { 
+  testConnection, 
+  auth, 
+  db, 
+  getUsuariosFromFirestore, 
+  mapUsuarioToEmployee,
+  getProdutosFromFirestore,
+  addProdutoToFirestore,
+  updateProdutoInFirestore,
+  deleteProdutoFromFirestore,
+  getTransacoesFromFirestore,
+  addTransacaoToFirestore,
+  subscribeToProdutos
+} from "./lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { setLogCallback } from "./lib/logger";
 
 import { 
   Activity, 
@@ -45,7 +62,11 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
-  X
+  X,
+  Wifi,
+  WifiOff,
+  Cloud,
+  Clock
 } from "lucide-react";
 
 interface Toast {
@@ -93,7 +114,8 @@ export default function App() {
   const [isDbLoaded, setIsDbLoaded] = useState(false);
 
   // ACTIVE OPERATOR & ROUTING STUFF
-  const [activeUser, setActiveUser] = useState<Employee>(initialEmployees[0]); // Levi Domingos (Admin) (Default on launch)
+  const [activeUser, setActiveUser] = useState<Employee | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>("DASHBOARD");
 
   // Premium AI predictions state
@@ -102,21 +124,188 @@ export default function App() {
 
   const currency = "MT"; // Meticais Moçambique
 
+  const formatSessionTime = (totalSecs: number) => {
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const s = totalSecs % 60;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    return `${m}m ${s}s`;
+  };
+
   // Theme state defaulting to night (elegant dark mode)
   const [theme, setTheme] = useState<"daily" | "night">("night");
+  const [isPOSFullscreen, setIsPOSFullscreen] = useState<boolean>(false);
 
-  // DB Sync helper
+  // Connectivity state tracking Firestore & network connection
+  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(false);
+
+  // Listen for Firestore Quota Exceeded events
+  useEffect(() => {
+    const handleQuotaExceeded = () => {
+      console.warn("[APP] Firestore Quota Exceeded detected. Showing notification banner.");
+      setIsQuotaExceeded(true);
+    };
+    window.addEventListener("firestore-quota-exceeded", handleQuotaExceeded);
+    return () => window.removeEventListener("firestore-quota-exceeded", handleQuotaExceeded);
+  }, []);
+
+  // Advanced top bar metrics states
+  const [lastSyncTime, setLastSyncTime] = useState<string>(() => new Date().toLocaleTimeString());
+  const [sessionSeconds, setSessionSeconds] = useState<number>(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSessionSeconds(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // DB Sync helper with robust offline queueing
   const syncTable = async (tableName: string, updatedData: any) => {
+    setLastSyncTime(new Date().toLocaleTimeString());
     try {
-      await fetch("/api/db/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table: tableName, data: updatedData })
-      });
-    } catch (err) {
-      console.error(`Erro ao sincronizar tabela ${tableName} com a base de dados central:`, err);
+      if (!navigator.onLine) {
+        throw new Error("browser is offline");
+      }
+      
+      if (tableName === "products") {
+        const promises = updatedData.map((prod: any) => addProdutoToFirestore(prod));
+        await Promise.all(promises);
+      } else if (tableName === "transactions") {
+        const promises = updatedData.map((tx: any) => addTransacaoToFirestore(tx));
+        await Promise.all(promises);
+      } else {
+        const response = await fetch("/api/db/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: tableName, data: updatedData })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`server returned error ${response.status}`);
+        }
+      }
+      
+      // Successfully synced! Try to clean from pending queue
+      const rawQueue = localStorage.getItem("pos_sync_queue");
+      if (rawQueue) {
+        const queue = JSON.parse(rawQueue);
+        if (queue[tableName]) {
+          delete queue[tableName];
+          localStorage.setItem("pos_sync_queue", JSON.stringify(queue));
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[OFFLINE CACHE] Não foi possível sincronizar a tabela '${tableName}' (${err.message}). Guardando para reenvio automático.`);
+      try {
+        const rawQueue = localStorage.getItem("pos_sync_queue");
+        const queue = rawQueue ? JSON.parse(rawQueue) : {};
+        queue[tableName] = updatedData;
+        localStorage.setItem("pos_sync_queue", JSON.stringify(queue));
+      } catch (queueErr) {
+        console.error("Erro ao guardar alteração na fila offline local:", queueErr);
+      }
     }
   };
+
+  // Synchronize any offline changes when connection is re-established (or via periodic retry timer)
+  useEffect(() => {
+    // Register the callback to capture silent errors and log them to AuditLogs
+    setLogCallback(handleAddAuditLog);
+  }, [activeUser, auditLogs]); // Re-bind when user context or logs state updates
+
+  useEffect(() => {
+    const processSyncQueue = async () => {
+      if (!navigator.onLine) return;
+      
+      try {
+        const rawQueue = localStorage.getItem("pos_sync_queue");
+        if (!rawQueue) return;
+        
+        const queue = JSON.parse(rawQueue);
+        const tableNames = Object.keys(queue);
+        if (tableNames.length === 0) return;
+        
+        console.log(`[SYNC QUEUE] Detectadas ${tableNames.length} tabelas com alterações offline pendentes. Sincronizando...`);
+        
+        for (const tableName of tableNames) {
+          const data = queue[tableName];
+          let success = false;
+          
+          if (tableName === "products") {
+            try {
+              const promises = data.map((prod: any) => addProdutoToFirestore(prod));
+              await Promise.all(promises);
+              success = true;
+            } catch (fsErr) {
+              console.error("[SYNC QUEUE] Erro ao ressincronizar produtos com Firestore:", fsErr);
+            }
+          } else if (tableName === "transactions") {
+            try {
+              const promises = data.map((tx: any) => addTransacaoToFirestore(tx));
+              await Promise.all(promises);
+              success = true;
+            } catch (fsErr) {
+              console.error("[SYNC QUEUE] Erro ao ressincronizar transações com Firestore:", fsErr);
+            }
+          } else {
+            const response = await fetch("/api/db/save", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ table: tableName, data })
+            });
+            success = response.ok;
+          }
+          
+          if (success) {
+            console.log(`[SYNC QUEUE] Tabela ${tableName} ressincronizada offline com sucesso!`);
+            delete queue[tableName];
+          } else {
+            console.warn(`[SYNC QUEUE] Falha na ressincronização de ${tableName}`);
+          }
+        }
+        
+        localStorage.setItem("pos_sync_queue", JSON.stringify(queue));
+      } catch (err) {
+        console.error("[SYNC QUEUE] Erro ao reprocessar alterações offline:", err);
+      }
+    };
+
+    const handleOnline = () => {
+      console.log("[CONEXÃO] Conexão restabelecida! Tentando reenviar alterações offline...");
+      setIsOnline(true);
+      processSyncQueue();
+    };
+
+    const handleOffline = () => {
+      console.log("[CONEXÃO] Conexão física de rede perdida!");
+      setIsOnline(false);
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    
+    // Periodically try to re-sync every 15 seconds as a robust retry mechanism
+    const interval = setInterval(() => {
+      if (navigator.onLine) {
+        setIsOnline(true);
+        processSyncQueue();
+      } else {
+        setIsOnline(false);
+      }
+    }, 15000);
+
+    // Initial attempt on load
+    processSyncQueue();
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      clearInterval(interval);
+    };
+  }, []);
+
 
   // Hydrate states from existential server database on mount
   useEffect(() => {
@@ -205,6 +394,127 @@ export default function App() {
     }
   }, [theme]);
 
+  // Firebase Auth Observer to handle auto-login, load profiles, and synchronize permissions
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          // Fetch user profile from Firestore "usuarios"
+          const userDocRef = doc(db, "usuarios", user.uid);
+          const docSnap = await getDoc(userDocRef);
+          
+          if (docSnap.exists()) {
+            const profileData = docSnap.data();
+            const mappedEmployee = mapUsuarioToEmployee(profileData as any);
+            
+            setActiveUser(mappedEmployee);
+            setIsAuthenticated(true);
+            setSettings(prev => ({
+              ...prev,
+              companyName: profileData.empresa || "OST Comércio Geral"
+            }));
+            
+            console.log(`[AUTH RESTORE] Utilizador autolocado via Firebase: ${mappedEmployee.name} (${mappedEmployee.role})`);
+          } else {
+            console.warn("[AUTH RESTORE] Perfil não encontrado no Firestore para uid:", user.uid);
+            setIsAuthenticated(false);
+            setActiveUser(null);
+          }
+        } catch (err) {
+          console.error("[AUTH RESTORE] Erro ao carregar perfil do utilizador:", err);
+          setIsAuthenticated(false);
+          setActiveUser(null);
+        }
+      } else {
+        setIsAuthenticated(false);
+        setActiveUser(null);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time products subscription and initial sync
+  useEffect(() => {
+    if (isAuthenticated) {
+      console.log("[FIRESTORE] Ativando subscrição em tempo real para produtos...");
+      
+      const unsubscribe = subscribeToProdutos(
+        async (firestoreProducts) => {
+          setIsOnline(true);
+          if (firestoreProducts && firestoreProducts.length > 0) {
+            console.log(`[FIRESTORE] Recebidos ${firestoreProducts.length} produtos em tempo real.`);
+            setProducts(firestoreProducts);
+          } else {
+            console.log("[FIRESTORE] Coleção de produtos vazia. Semeando produtos iniciais...");
+            for (const prod of initialProducts) {
+              await addProdutoToFirestore(prod);
+            }
+          }
+        },
+        (error) => {
+          console.error("[FIRESTORE] Erro no listener em tempo real de produtos:", error);
+          setIsOnline(false);
+        }
+      );
+
+      const loadTransactions = async () => {
+        try {
+          const firestoreTx = await getTransacoesFromFirestore();
+          if (firestoreTx && firestoreTx.length > 0) {
+            console.log(`[FIRESTORE] Carregadas ${firestoreTx.length} transações.`);
+            setTransactions(firestoreTx.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+          } else {
+            console.log("[FIRESTORE] Coleção de transações vazia. Semeando transações iniciais...");
+            const mockTx = generateMockTransactions();
+            for (const tx of mockTx) {
+              await addTransacaoToFirestore(tx);
+            }
+            setTransactions(mockTx);
+          }
+        } catch (err) {
+          console.error("[FIRESTORE] Erro ao carregar transações do Firestore:", err);
+        }
+      };
+
+      loadTransactions();
+
+      return () => {
+        console.log("[FIRESTORE] Desativando subscrição em tempo real para produtos.");
+        unsubscribe();
+      };
+    }
+  }, [isAuthenticated]);
+
+  // Synchronize Firestore user database with local staff module list
+  useEffect(() => {
+    if (isAuthenticated) {
+      const syncStaff = async () => {
+        try {
+          const firestoreUsers = await getUsuariosFromFirestore();
+          if (firestoreUsers && firestoreUsers.length > 0) {
+            // Merge firestore users with mock users by ID, prioritizing Firestore profiles
+            setEmployees(prev => {
+              const merged = [...prev];
+              firestoreUsers.forEach(fUser => {
+                const idx = merged.findIndex(m => m.id === fUser.id);
+                if (idx > -1) {
+                  merged[idx] = fUser;
+                } else {
+                  merged.push(fUser);
+                }
+              });
+              return merged;
+            });
+          }
+        } catch (err) {
+          console.error("Erro ao sincronizar quadro de funcionários do Firestore:", err);
+        }
+      };
+      syncStaff();
+    }
+  }, [isAuthenticated]);
+
   // Quick Switch Operator Handlers
   const handleChangeRole = async (role: UserRole) => {
     // find a fitting mock employee or create template
@@ -238,14 +548,17 @@ export default function App() {
   // GENERAL AUDIT LOGGING WRAPPER
   const handleAddAuditLog = (action: string, module: string, details: string) => {
     let authRole: UserRole = "CASHIER";
-    const raw = activeUser.role.toLowerCase();
-    if (raw.includes("supervisor")) authRole = "SUPERVISOR";
-    else if (raw.includes("administrador") || raw.includes("gestor")) authRole = "ADMIN";
+    const username = activeUser ? activeUser.name : "Sistema / Visitante";
+    if (activeUser) {
+      const raw = activeUser.role.toLowerCase();
+      if (raw.includes("supervisor")) authRole = "SUPERVISOR";
+      else if (raw.includes("administrador") || raw.includes("gestor")) authRole = "ADMIN";
+    }
 
     const newLog: AuditLog = {
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
-      user: activeUser.name,
+      user: username,
       userRole: authRole,
       action,
       module,
@@ -313,6 +626,11 @@ export default function App() {
       syncTable("employees", updated);
       return updated;
     });
+  };
+
+  const handleUpdateEmployees = (updatedList: Employee[]) => {
+    setEmployees(updatedList);
+    syncTable("employees", updatedList);
   };
 
   // CENTRAL MUTATION HOOKS - SETTINGS
@@ -437,11 +755,61 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
 
   // Translate employees role to fit authorization hooks
   const simplifiedRole: UserRole = useMemo(() => {
+    if (!activeUser) return "CASHIER";
     const raw = activeUser.role.toLowerCase();
     if (raw.includes("caixa") || raw.includes("vendedor")) return "CASHIER";
     if (raw.includes("supervisor")) return "SUPERVISOR";
     return "ADMIN";
   }, [activeUser]);
+
+  const handleLoginSuccess = (user: Employee, branchName: string) => {
+    setActiveUser(user);
+    setIsAuthenticated(true);
+    setSettings(prev => ({
+      ...prev,
+      companyName: branchName
+    }));
+    
+    // Auto-redirect conforming to profile role
+    const raw = user.role.toLowerCase();
+    if (raw.includes("caixa") || raw.includes("vendedor")) {
+      setActiveTab("POS");
+    } else {
+      setActiveTab("DASHBOARD");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      if (activeUser) {
+        handleAddAuditLog(
+          "Logout Efetuado",
+          "SEGURANÇA",
+          `Operador ${activeUser.name} encerrou a sessão.`
+        );
+      }
+      await auth.signOut();
+      setActiveUser(null);
+      setIsAuthenticated(false);
+      showToast("Sessão terminada com sucesso.", "info");
+    } catch (err: any) {
+      console.error("Erro ao efetuar logout do Firebase:", err);
+      setActiveUser(null);
+      setIsAuthenticated(false);
+      showToast("Sessão terminada com sucesso.", "info");
+    }
+  };
+
+  if (!isAuthenticated || !activeUser) {
+    return (
+      <LoginModule
+        employees={employees}
+        companyName={settings.companyName}
+        onLoginSuccess={handleLoginSuccess}
+        onShowToast={showToast}
+      />
+    );
+  }
 
   return (
     <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-200 ${
@@ -452,95 +820,162 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
       <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl pointer-events-none z-0"></div>
 
       {/* Main sidebar on the left */}
-      <Sidebar
-        currentRole={simplifiedRole}
-        onChangeRole={handleChangeRole}
-        activeModule={activeTab.toLowerCase()}
-        onChangeModule={(mod) => setActiveTab(mod.toUpperCase())}
-        companyName={settings.companyName}
-      />
+      {!isPOSFullscreen && (
+        <Sidebar
+          currentRole={simplifiedRole}
+          onChangeRole={handleChangeRole}
+          activeModule={activeTab.toLowerCase()}
+          onChangeModule={(mod) => setActiveTab(mod.toUpperCase())}
+          companyName={settings.companyName}
+          onLogout={handleLogout}
+        />
+      )}
 
       {/* Outer body wrapper */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative z-10">
         
         {/* TOP COMPACT STATUS BAR BRAND BANNER */}
-        <header className={`border-b h-16 px-6 shrink-0 flex items-center justify-between shadow-md backdrop-blur-md relative z-20 transition-all ${
-          theme === "night" ? "bg-zinc-950/50 border-zinc-800/80" : "bg-white border-slate-200"
-        }`}>
-          
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 bg-amber-500 rounded-full animate-ping"></span>
+        {!isPOSFullscreen && (
+          <header className={`border-b h-16 px-4 md:px-6 shrink-0 flex items-center justify-between shadow-md backdrop-blur-md relative z-20 transition-all ${
+            theme === "night" ? "bg-zinc-950/50 border-zinc-800/80" : "bg-white border-slate-200"
+          }`}>
             
-            <h1 className={`font-extrabold text-sm tracking-tight flex items-center gap-1.5 uppercase ${
-              theme === "night" ? "text-white" : "text-slate-800"
-            }`}>
-              {settings.companyName}
-              <span className={`border text-[10px] px-1.5 py-0.5 rounded-full font-mono normal-case font-medium ${
-                theme === "night" ? "bg-zinc-900 border-zinc-800 text-slate-300" : "bg-slate-100 border-slate-200 text-slate-500"
-              }`}>{settings.slogan}</span>
-            </h1>
-          </div>
-
-          <div className="flex items-center gap-3.5 text-xs">
-            {/* System Clock & credentials telemetry */}
-            <div className={`hidden md:flex items-center gap-3.5 font-mono text-[10.5px] ${
-              theme === "night" ? "text-slate-400" : "text-slate-500"
-            }`}>
-              <span className="flex items-center gap-1">
-                <Activity className="w-3.5 h-3.5 text-amber-500" />
-                Sessão Segura Activa
-              </span>
-              <span>•</span>
-              <span className={`border px-2.5 py-0.5 rounded font-extrabold ${
-                theme === "night" ? "bg-amber-500/10 border-amber-500/25 text-amber-400" : "bg-amber-50 border-amber-200 text-amber-600"
-              }`}>{settings.companyNuit} / NUIT</span>
+            <div className="flex items-center gap-3">
+              {/* System Status Indicator */}
+              <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                isOnline 
+                  ? theme === "night"
+                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                    : "bg-emerald-50 text-emerald-600 border border-emerald-200 shadow-sm"
+                  : theme === "night"
+                    ? "bg-rose-500/10 text-rose-400 border border-rose-500/20 animate-pulse"
+                    : "bg-rose-50 text-rose-600 border border-rose-200 shadow-sm animate-pulse"
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`}></span>
+                <span>{isOnline ? "SISTEMA ONLINE" : "SISTEMA OFFLINE"}</span>
+              </div>
+  
+              <div className="hidden lg:flex items-center gap-1 text-[11px] font-mono opacity-80">
+                <span className={theme === "night" ? "text-slate-400" : "text-slate-600"}>Empresa:</span>
+                <span className={`font-bold uppercase ${theme === "night" ? "text-white" : "text-slate-800"}`}>
+                  {settings.companyName}
+                </span>
+              </div>
+  
+              <span className="hidden lg:inline text-slate-500 font-mono text-[11px]">•</span>
+  
+              <div className="hidden sm:flex items-center gap-1 text-[11px] font-mono opacity-80">
+                <span className={theme === "night" ? "text-slate-400" : "text-slate-600"}>Versão:</span>
+                <span className={`font-bold ${theme === "night" ? "text-amber-400" : "text-orange-600"}`}>v4.2.1-ERP</span>
+              </div>
             </div>
-
-            {/* Daily/Night Theme Switcher Custom Widget */}
-            <button
-              onClick={() => setTheme(theme === "daily" ? "night" : "daily")}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border transition-all cursor-pointer text-[11px] font-bold ${
-                theme === "night" 
-                  ? "bg-zinc-900 border-zinc-800 text-amber-500 hover:text-amber-400" 
-                  : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-sm"
-              }`}
-              title="Alternar Layout de Tema"
-            >
-              {theme === "daily" ? (
-                <>
-                  <Sun className="w-3.5 h-3.5 text-amber-500 animate-spin" style={{ animationDuration: "10s" }} />
-                  <span>Modo Dia</span>
-                </>
-              ) : (
-                <>
-                  <Moon className="w-3.5 h-3.5 text-amber-450 fill-amber-400/25" />
-                  <span>Modo Noite</span>
-                </>
-              )}
-            </button>
-
-            {/* Active user status pill */}
-            <div className={`flex items-center gap-2 p-1.5 rounded-xl border ${
-              theme === "night" ? "bg-zinc-900 border-zinc-800" : "bg-white border-slate-200 shadow-sm"
-            }`}>
-              <span className="w-5 h-5 rounded-lg bg-amber-500 text-zinc-950 flex items-center justify-center font-bold text-[10px]">
-                {activeUser.name.substring(0, 2).toUpperCase()}
-              </span>
-              <div className="text-left leading-none">
-                <p className={`font-extrabold text-[10.5px] leading-tight ${
-                  theme === "night" ? "text-slate-200" : "text-slate-800"
-                }`}>{activeUser.name}</p>
-                <p className={`text-[9px] italic mt-0.5 ${
-                  theme === "night" ? "text-slate-400" : "text-slate-500"
-                }`}>{activeUser.role}</p>
+  
+            <div className="flex items-center gap-4 text-xs">
+              {/* Session Stats & Last Sync */}
+              <div className={`hidden md:flex items-center gap-4 font-mono text-[10.5px] ${
+                theme === "night" ? "text-slate-400" : "text-slate-500"
+              }`}>
+                <div className="flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Sessão:</span>
+                  <span className={`font-bold ${theme === "night" ? "text-slate-200" : "text-slate-800"}`}>
+                    {formatSessionTime(sessionSeconds)}
+                  </span>
+                </div>
+                <span>•</span>
+                <div className="flex items-center gap-1.5" title="Hora do último envio ou recebimento de dados com a nuvem">
+                  <Cloud className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Última Sinc:</span>
+                  <span className={`font-bold ${theme === "night" ? "text-slate-200" : "text-slate-800"}`}>
+                    {lastSyncTime}
+                  </span>
+                </div>
+              </div>
+  
+              {/* Daily/Night Theme Switcher Custom Widget */}
+              <button
+                onClick={() => setTheme(theme === "daily" ? "night" : "daily")}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer text-[10.5px] font-bold ${
+                  theme === "night" 
+                    ? "bg-zinc-900 border-zinc-800 text-amber-500 hover:text-amber-400" 
+                    : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-sm"
+                }`}
+                title="Alternar Layout de Tema"
+              >
+                {theme === "daily" ? (
+                  <>
+                    <Sun className="w-3.5 h-3.5 text-amber-500 animate-spin" style={{ animationDuration: "10s" }} />
+                    <span>Dia</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-3.5 h-3.5 text-amber-450 fill-amber-400/25" />
+                    <span>Noite</span>
+                  </>
+                )}
+              </button>
+  
+              {/* Active user status pill */}
+              <div className={`flex items-center gap-2 p-1.5 rounded-xl border ${
+                theme === "night" ? "bg-zinc-900 border-zinc-800" : "bg-white border-slate-200 shadow-sm"
+              }`}>
+                <span className="w-6 h-6 rounded-lg bg-orange-500 text-white flex items-center justify-center font-bold text-[10px]">
+                  {activeUser.name.substring(0, 2).toUpperCase()}
+                </span>
+                <div className="text-left leading-none">
+                  <p className={`font-extrabold text-[10.5px] leading-tight ${
+                    theme === "night" ? "text-slate-200" : "text-slate-800"
+                  }`}>{activeUser.name}</p>
+                  <p className={`text-[9px] italic mt-0.5 ${
+                    theme === "night" ? "text-slate-400" : "text-slate-500"
+                  }`}>{activeUser.role}</p>
+                </div>
+              </div>
+            </div>
+  
+          </header>
+        )}
+        
+        {isQuotaExceeded && (
+          <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-3 flex items-start gap-3 relative z-30 animate-in slide-in-from-top duration-200">
+            <div className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center shrink-0">
+              <AlertCircle className="w-5 h-5" />
+            </div>
+            <div className="flex-1 text-xs">
+              <h4 className="font-extrabold text-amber-500">Aviso do Sistema: Limite de Quota Diária Excedido (Firestore Writes)</h4>
+              <p className="text-slate-400 mt-1 leading-relaxed">
+                A cota diária gratuita de gravação do Firestore (**Spark Plan / Free Tier**) foi atingida para este projeto. O sistema de banco de dados entrou em modo de simulação segura local. Pode continuar a registar vendas, gerir artigos, consultar relatórios e testar todas as funcionalidades do POS com segurança! Os limites de quota serão reiniciados automaticamente amanhã.
+              </p>
+              <div className="flex flex-wrap gap-3 mt-2">
+                <a
+                  href="https://console.firebase.google.com/project/gen-lang-client-0285564041/firestore/databases/ai-studio-e2d52f5d-b57f-430e-9d24-e415e95b0744/data?openUpgradeDialog=true"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold px-3 py-1 rounded text-[10px] transition uppercase tracking-wider"
+                >
+                  Ir para a Consola Firebase ↗
+                </a>
+                <a
+                  href="https://firebase.google.com/pricing#cloud-firestore"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="border border-amber-500/30 text-amber-400 hover:text-amber-300 font-bold px-3 py-1 rounded text-[10px] transition"
+                >
+                  Tabela de Preços e Limites ↗
+                </a>
+                <button
+                  onClick={() => setIsQuotaExceeded(false)}
+                  className="text-slate-500 hover:text-slate-300 underline font-semibold text-[10px]"
+                >
+                  Ignorar por agora
+                </button>
               </div>
             </div>
           </div>
-
-        </header>
-
+        )}
+  
         {/* INNER SCROLLABLE WORKPORT PANEL CONTENT */}
-        <main className="flex-1 overflow-y-auto p-6 relative">
+        <main className={`flex-1 overflow-y-auto relative ${isPOSFullscreen ? "p-0" : "p-6"}`}>
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -556,11 +991,15 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
                 <POSModule
                   products={products}
                   customers={customers}
+                  transactions={transactions}
                   onCompleteSale={handleCompleteSaleAction}
                   activeUsername={activeUser.name}
+                  settings={settings}
                   onAddAuditLog={handleAddAuditLog}
                   currency={currency}
                   onShowToast={showToast}
+                  isPOSFullscreen={isPOSFullscreen}
+                  onChangePOSFullscreen={setIsPOSFullscreen}
                 />
               )}
 
@@ -593,12 +1032,15 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
               {activeTab === "STOCK" && (
                 <StockModule
                   products={products}
+                  transactions={transactions}
                   onAddProduct={handleAddProduct}
                   onUpdateProduct={handleUpdateProduct}
                   onDeleteProduct={handleDeleteProduct}
                   onAddAuditLog={handleAddAuditLog}
                   currentRole={simplifiedRole}
                   currency={currency}
+                  settings={settings}
+                  onShowToast={showToast}
                 />
               )}
 
@@ -630,6 +1072,7 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
                   employees={employees}
                   auditLogs={auditLogs}
                   onAddEmployee={handleAddEmployee}
+                  onUpdateEmployees={handleUpdateEmployees}
                   activeUsername={activeUser.name}
                   onAddAuditLog={handleAddAuditLog}
                   currentRole={simplifiedRole}
@@ -776,6 +1219,7 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
                   onAddAuditLog={handleAddAuditLog}
                   currentRole={simplifiedRole}
                   onShowToast={showToast}
+                  products={products}
                 />
               )}
 

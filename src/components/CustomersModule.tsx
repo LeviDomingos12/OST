@@ -79,9 +79,10 @@ export default function CustomersModule({
   const filteredCustomers = useMemo(() => {
     return customers.filter(c => {
       // 1. Search text
-      const matchSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          c.phone.includes(searchQuery) || 
-                          (c.nuit && c.nuit.includes(searchQuery));
+      const matchSearch = 
+        (c.name || "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+        (c.phone || "").includes(searchQuery) || 
+        (c.nuit && c.nuit.includes(searchQuery));
       // 2. Advanced filters
       let matchFilter = true;
       if (filterType === "VIP") {
