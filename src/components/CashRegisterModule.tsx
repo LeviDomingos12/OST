@@ -27,9 +27,25 @@ import {
   RotateCcw,
   UserCheck
 } from "lucide-react";
-import { CashFlowEntry, Transaction, UserRole } from "../types";
+import { CashFlowEntry, Transaction, UserRole, SystemSettings } from "../types";
 import CashAnalyticalCharts from "./CashAnalyticalCharts";
 import DenominationCounter, { DENOMINATIONS } from "./DenominationCounter";
+
+const getBase64ImageFromUrl = async (imageUrl: string): Promise<string> => {
+  try {
+    const res = await fetch(imageUrl);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.error("Error loading logo for PDF:", err);
+    return "";
+  }
+};
 
 interface CashRegisterModuleProps {
   cashFlow: CashFlowEntry[];
@@ -39,6 +55,7 @@ interface CashRegisterModuleProps {
   currentRole: UserRole;
   onAddAuditLog: (action: string, module: string, details: string) => void;
   currency: string;
+  settings?: SystemSettings;
 }
 
 export default function CashRegisterModule({
@@ -48,7 +65,8 @@ export default function CashRegisterModule({
   activeUsername,
   currentRole,
   onAddAuditLog,
-  currency
+  currency,
+  settings = {} as any
 }: CashRegisterModuleProps) {
   
   // Tabs: "active" (Painel Analítico) | "closures" (Histórico de Fechamento)
@@ -512,6 +530,9 @@ export default function CashRegisterModule({
       `Turno de caixa fechado. Teórico: ${newClosure.theoreticalBalance} MT, Contado: ${newClosure.physicalBalance} MT. Diferença: ${newClosure.difference} MT. Autorizado por: ${closingSupervisor}`
     );
 
+    // Export PDF on closure
+    handleExportSingleClosurePDF(newClosure);
+
     // Show simulation visualizer
     setIsSimulatingPrint(true);
     setTimeout(() => {
@@ -525,8 +546,14 @@ export default function CashRegisterModule({
   };
 
   // Export functions (Item 12)
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
     const doc = new jsPDF();
+    
+    const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+    if (logoData) {
+      doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
+    }
+
     doc.setFontSize(16);
     doc.text("OST VENDAS - RELATÓRIO DO LIVRO DE CAIXA", 14, 15);
     
@@ -554,6 +581,101 @@ export default function CashRegisterModule({
 
     doc.save(`OST_Livro_Caixa_${Date.now()}.pdf`);
     onAddAuditLog("Exportar Relatório PDF", "CAIXA", `Relatório PDF de caixa exportado por ${activeUsername}.`);
+  };
+
+  const handleExportSingleClosurePDF = async (closure: any) => {
+    try {
+      const doc = new jsPDF();
+      
+      const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+      if (logoData) {
+        doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
+      }
+
+      // Header Style
+      doc.setFontSize(18);
+      doc.setFont("helvetica", "bold");
+      doc.text(settings.companyName || "OST COMÉRCIO CENTRAL", 14, 20);
+      
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.text(`NUIT: ${settings.companyNuit || "400293112"} | ${settings.storeAddress || "Av. Marginal, Maputo"}`, 14, 26);
+      
+      doc.setDrawColor(220, 220, 220);
+      doc.line(14, 30, 196, 30);
+      
+      // Title
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text("COMPROVATIVO DE FECHO DE CAIXA DE TURNO", 14, 38);
+      
+      // Info Block
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.text(`ID de Fechamento: ${closure.id}`, 14, 46);
+      doc.text(`Data/Hora: ${new Date(closure.timestamp).toLocaleString()}`, 14, 52);
+      doc.text(`Operador de Caixa: ${closure.operator || activeUsername}`, 14, 58);
+      doc.text(`Supervisor Responsável: ${closure.authorizedSupervisor || "Não informado"}`, 14, 64);
+      
+      // Balancete Status Badge
+      doc.setFont("helvetica", "bold");
+      const diffVal = closure.difference || 0;
+      const diffText = diffVal === 0 
+        ? "CONSOLIDADO SEM DESVIOS (100% REGULAR)" 
+        : diffVal > 0 
+          ? `DESVIO POSITIVO DE +${diffVal.toLocaleString()} ${currency}`
+          : `DESVIO NEGATIVO DE ${diffVal.toLocaleString()} ${currency} (QUEBRA DE CAIXA)`;
+      doc.text(`Estado do Balancete: ${diffText}`, 14, 72);
+      
+      // Table of Cash balance details
+      const headers = [["Rubrica de Caixa (Descrição)", "Valor Reconhecido"]];
+      const dataRows = [
+        ["(+) Fundo de Maneio / Saldo de Abertura", `${(closure.reinforcements || 0).toLocaleString()} ${currency}`],
+        ["(+) Vendas em Dinheiro Registradas (POS)", `${(closure.cashSales || 0).toLocaleString()} ${currency}`],
+        ["(+) Outras Entradas (Reforços de Caixa)", `${(closure.inputs || 0).toLocaleString()} ${currency}`],
+        ["(-) Saídas de Caixa (Sangrias / Despesas)", `${((closure.expenses || 0) + (closure.quebras || 0)).toLocaleString()} ${currency}`],
+        ["(=) Saldo Teórico Esperado", `${(closure.theoreticalBalance || 0).toLocaleString()} ${currency}`],
+        ["(≡) Saldo Físico Contado", `${(closure.physicalBalance || 0).toLocaleString()} ${currency}`],
+        ["(±) Diferença de Fechamento (Desvio)", `${(closure.difference || 0).toLocaleString()} ${currency}`]
+      ];
+      
+      autoTable(doc, {
+        startY: 78,
+        head: headers,
+        body: dataRows,
+        theme: "grid",
+        styles: { fontSize: 9, cellPadding: 4 },
+        headStyles: { fillColor: [249, 115, 22] }, // orange theme
+        columnStyles: {
+          0: { fontStyle: "bold" },
+          1: { halign: "right", fontStyle: "bold" }
+        }
+      });
+      
+      // Observations
+      const finalY = (doc as any).lastAutoTable?.finalY || 140;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.text("Observações de Fecho:", 14, finalY + 12);
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(9);
+      doc.text(closure.observations || "Nenhuma observação reportada.", 14, finalY + 18, { maxWidth: 182 });
+      
+      // Signatures Line
+      doc.setDrawColor(180, 180, 180);
+      doc.line(14, finalY + 45, 90, finalY + 45);
+      doc.line(120, finalY + 45, 196, finalY + 45);
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text("Assinatura do Operador (Caixa)", 14, finalY + 50);
+      doc.text("Homologação do Supervisor (Assinatura)", 120, finalY + 50);
+      
+      doc.save(`Fecho_Caixa_${closure.id}.pdf`);
+      onAddAuditLog("Exportar Fecho PDF", "CAIXA", `Comprovativo de fecho de caixa ${closure.id} exportado em PDF por ${activeUsername}.`);
+    } catch (err) {
+      console.error("Erro ao gerar PDF do fecho:", err);
+    }
   };
 
   const handleExportCSV = () => {
@@ -1174,6 +1296,7 @@ export default function CashRegisterModule({
                   <th className="p-3.5 font-bold text-slate-700 dark:text-zinc-300 text-right">Físico Contado</th>
                   <th className="p-3.5 font-bold text-slate-700 dark:text-zinc-300 text-center">Diferença / Desvio</th>
                   <th className="p-3.5 font-bold text-slate-700 dark:text-zinc-300">Observações</th>
+                  <th className="p-3.5 font-bold text-slate-700 dark:text-zinc-300 text-center">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-150 dark:divide-zinc-850">
@@ -1208,6 +1331,17 @@ export default function CashRegisterModule({
                       </td>
                       <td className="p-3.5 text-slate-500 italic font-medium max-w-[200px] truncate">
                         {hist.observations}
+                      </td>
+                      <td className="p-3.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleExportSingleClosurePDF(hist)}
+                          className="px-2.5 py-1 text-[10px] font-bold bg-orange-50 hover:bg-orange-100 text-orange-600 dark:bg-orange-950/20 dark:hover:bg-orange-900/30 dark:text-orange-400 rounded-lg flex items-center gap-1 mx-auto transition cursor-pointer"
+                          title="Exportar Comprovante de Fecho PDF"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>PDF</span>
+                        </button>
                       </td>
                     </tr>
                   );

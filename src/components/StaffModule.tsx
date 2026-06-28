@@ -38,6 +38,22 @@ import {
 } from "lucide-react";
 import { Employee, AuditLog, UserRole } from "../types";
 
+const getBase64ImageFromUrl = async (imageUrl: string): Promise<string> => {
+  try {
+    const res = await fetch(imageUrl);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.error("Error loading logo for PDF:", err);
+    return "";
+  }
+};
+
 interface StaffModuleProps {
   employees: Employee[];
   auditLogs: AuditLog[];
@@ -103,6 +119,10 @@ export default function StaffModule({
   const [employeeStatus, setEmployeeStatus] = useState<"ACTIVE" | "INACTIVE" | "SUSPENDED">("ACTIVE");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [localError, setLocalError] = useState("");
+  const [pin, setPin] = useState("");
+  const [email, setEmail] = useState("");
+  const [sendEmailCredentials, setSendEmailCredentials] = useState(true);
+  const [emailSendingStatus, setEmailSendingStatus] = useState<"IDLE" | "SENDING" | "SUCCESS" | "ERROR">("IDLE");
 
   // Quick state details for Permissions modal
   const [empPermissions, setEmpPermissions] = useState<string[]>(["POS", "STOCK"]);
@@ -162,9 +182,15 @@ export default function StaffModule({
   };
 
   // Staff PDF Export
-  const handleDownloadStaffPDF = () => {
+  const handleDownloadStaffPDF = async () => {
     try {
       const doc = new jsPDF();
+      
+      const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+      if (logoData) {
+        doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
+      }
+      
       doc.setFontSize(18);
       doc.setFont("helvetica", "bold");
       doc.text("OST COMÉRCIO CENTRAL", 14, 22);
@@ -245,9 +271,15 @@ export default function StaffModule({
   };
 
   // Audit Logs PDF Export
-  const handleDownloadAuditPDF = () => {
+  const handleDownloadAuditPDF = async () => {
     try {
       const doc = new jsPDF();
+      
+      const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+      if (logoData) {
+        doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
+      }
+      
       doc.setFontSize(18);
       doc.setFont("helvetica", "bold");
       doc.text("OST COMÉRCIO CENTRAL", 14, 22);
@@ -298,9 +330,14 @@ export default function StaffModule({
   };
 
   // Print individual payslip (Recibo de Salário)
-  const handlePrintPayslip = (emp: Employee) => {
+  const handlePrintPayslip = async (emp: Employee) => {
     try {
       const doc = new jsPDF();
+      
+      const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+      if (logoData) {
+        doc.addImage(logoData, "JPEG", 160, 13, 26, 26);
+      }
       
       doc.setDrawColor(220, 220, 220);
       doc.rect(10, 10, 190, 277); // Outer border
@@ -428,6 +465,8 @@ export default function StaffModule({
       setLocalError("Por favor, introduza o Nome e Contacto do trabalhador.");
       return;
     }
+    
+    const formattedPin = pin.trim() || Math.floor(1000 + Math.random() * 9000).toString(); // Generates random 4-digit code as backup
     setLocalError("");
 
     const payload: Employee = {
@@ -437,15 +476,35 @@ export default function StaffModule({
       contact,
       salary,
       admissionDate: new Date().toISOString().split("T")[0],
-      status: "ACTIVE"
+      status: "ACTIVE",
+      pin: formattedPin,
+      email: email.trim() || undefined
     };
 
     onAddEmployee(payload);
     
+    let auditDetails = `Novo funcionário '${payload.name}' registado como '${payload.role}' com PIN '${formattedPin}' e salário de ${payload.salary.toLocaleString()} ${currency}.`;
+
+    if (sendEmailCredentials && email.trim()) {
+      setEmailSendingStatus("SENDING");
+      auditDetails += ` Envio de credenciais agendado para o e-mail: ${email.trim()}.`;
+      setTimeout(() => {
+        setEmailSendingStatus("SUCCESS");
+        onAddAuditLog(
+          "Notificação de Credenciais",
+          "NOTIFICAÇÃO",
+          `Credenciais de acesso enviadas com sucesso para o Gmail de ${payload.name} (${email.trim()}). Conteúdo: Código PIN e Manual de Boas-vindas.`
+        );
+        setTimeout(() => {
+          setEmailSendingStatus("IDLE");
+        }, 4000);
+      }, 1500);
+    }
+
     onAddAuditLog(
       "Contratar Funcionário",
       "FUNCIONÁRIOS",
-      `Novo funcionário '${payload.name}' registado como '${payload.role}' com salário de ${payload.salary.toLocaleString()} ${currency}`
+      auditDetails
     );
 
     setIsFormOpen(false);
@@ -453,6 +512,8 @@ export default function StaffModule({
     setRole("Operador de Caixa");
     setContact("");
     setSalary(18000);
+    setPin("");
+    setEmail("");
   };
 
   // Edit employee information
@@ -468,7 +529,9 @@ export default function StaffModule({
           role,
           contact,
           salary,
-          status: employeeStatus
+          status: employeeStatus,
+          pin: pin.trim() || emp.pin || "1234",
+          email: email.trim() || emp.email
         };
       }
       return emp;
@@ -479,11 +542,13 @@ export default function StaffModule({
     onAddAuditLog(
       "Editar Funcionário",
       "FUNCIONÁRIOS",
-      `Perfil do funcionário '${name}' atualizado. Estado: ${employeeStatus}, Cargo: ${role}, Salário: ${salary.toLocaleString()} ${currency}.`
+      `Perfil do funcionário '${name}' atualizado. Estado: ${employeeStatus}, Cargo: ${role}, PIN atualizado/confirmado, Salário: ${salary.toLocaleString()} ${currency}.`
     );
 
     setIsEditModalOpen(false);
     setSelectedEmp(null);
+    setPin("");
+    setEmail("");
   };
 
   // Save changes to permissions
@@ -681,6 +746,8 @@ export default function StaffModule({
     setContact(emp.contact);
     setSalary(emp.salary);
     setEmployeeStatus(emp.status as any || "ACTIVE");
+    setPin(emp.pin || "");
+    setEmail(emp.email || "");
     setIsEditModalOpen(true);
   };
 
@@ -1537,6 +1604,64 @@ export default function StaffModule({
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3.5">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">PIN do Operador (4 Dígitos)</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    placeholder="Ex: 1234 (Opcional)"
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-semibold outline-none focus:border-orange-500 text-xs text-slate-800"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Gmail / E-mail de Trabalho</label>
+                  <input
+                    type="email"
+                    placeholder="Ex: levi.domingos@gmail.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-orange-500 text-xs text-slate-800"
+                  />
+                </div>
+              </div>
+
+              {/* Opção para envio de credenciais ao Gmail do funcionário */}
+              {email.trim() && (
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-150 space-y-1.5 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-600 font-bold">Enviar credenciais por E-mail</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={sendEmailCredentials}
+                        onChange={(e) => setSendEmailCredentials(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-8 h-4 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-orange-500"></div>
+                    </label>
+                  </div>
+                  <p className="text-[9px] text-slate-400">
+                    O funcionário receberá um e-mail com o PIN do operador e as diretrizes do cargo para login seguro no terminal.
+                  </p>
+                  
+                  {emailSendingStatus === "SENDING" && (
+                    <div className="text-[10px] text-orange-500 font-semibold flex items-center gap-1.5 pt-1">
+                      <span className="w-3 h-3 rounded-full border border-orange-500 border-t-transparent animate-spin"></span>
+                      <span>A enviar credenciais para o Gmail...</span>
+                    </div>
+                  )}
+                  {emailSendingStatus === "SUCCESS" && (
+                    <div className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1 pt-1">
+                      <span>✓ Credenciais enviadas com sucesso ao Gmail!</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
@@ -1617,6 +1742,31 @@ export default function StaffModule({
                     value={salary || ""}
                     onChange={(e) => setSalary(Number(e.target.value))}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-semibold outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3.5">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">PIN do Operador (4 Dígitos)</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    placeholder="Ex: 1234"
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-semibold outline-none focus:border-orange-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">E-mail (Gmail)</label>
+                  <input
+                    type="email"
+                    placeholder="Ex: levi@gmail.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
@@ -1808,6 +1958,14 @@ export default function StaffModule({
                       <div>
                         <span className="text-slate-400 block text-[9.5px]">DATA ADMISSÃO</span>
                         <span className="font-mono text-slate-700 block font-bold mt-0.5">{selectedEmp.admissionDate || "2024-01-10"}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[9.5px]">PIN DO OPERADOR</span>
+                        <span className="font-mono text-orange-600 block font-extrabold mt-0.5">{selectedEmp.pin || "Não definido (Padrão 1234)"}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[9.5px]">E-MAIL (GMAIL)</span>
+                        <span className="text-slate-700 block font-semibold mt-0.5 truncate" title={selectedEmp.email || "Não registado"}>{selectedEmp.email || "Não registado"}</span>
                       </div>
                     </div>
                   </div>

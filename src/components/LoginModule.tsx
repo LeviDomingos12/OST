@@ -66,6 +66,10 @@ export default function LoginModule({
   // PIN Form State
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(employees[0]?.id || "");
   const [pin, setPin] = useState("");
+  const [requireOperatorPin, setRequireOperatorPin] = useState<boolean>(() => {
+    const saved = localStorage.getItem("erp_require_operator_pin");
+    return saved !== "false"; // Defaults to true
+  });
 
   // Caps Lock State
   const [isCapsLockOn, setIsCapsLockOn] = useState(false);
@@ -314,10 +318,18 @@ export default function LoginModule({
 
     const match = employees.find(emp => emp.id === selectedEmployeeId);
     if (match) {
-      if (pinVal === "1234" || pinVal === "2026") {
+      // Atribuímos PINs específicos para cada operador para demonstrar segurança individual
+      const correctPin = match.pin || (
+        match.id === "e1" ? "1234" :
+        match.id === "e2" ? "2222" :
+        match.id === "e3" ? "3333" :
+        match.id === "e4" ? "4444" : "1234"
+      );
+
+      if (pinVal === correctPin || pinVal === "2026") {
         triggerLoadingPipeline(match, "OST Comércio Geral");
       } else {
-        setErrorMessage("❌ PIN de demonstração incorreto. Tente '1234' ou '2026'.");
+        setErrorMessage(`❌ PIN de segurança incorreto para ${match.name}. (Dica: Atribuído "${correctPin}")`);
         setPin("");
       }
     }
@@ -344,9 +356,12 @@ export default function LoginModule({
         
         {/* Brand Header */}
         <div className="flex items-center gap-3">
-          <div className="bg-gradient-to-tr from-[#FF6B00] to-[#ff8522] w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xl shadow-lg shadow-orange-950/20 text-white">
-            OST
-          </div>
+          <img
+            src="/src/assets/images/app_logo_1782658148089.jpg"
+            alt="OST Vendas Logo"
+            className="w-12 h-12 rounded-2xl object-contain bg-white p-1 shrink-0 shadow-lg shadow-orange-950/20"
+            referrerPolicy="no-referrer"
+          />
           <div>
             <h2 className="font-extrabold text-lg tracking-tight text-white">OST Vendas</h2>
             <p className="text-[10px] text-orange-500 uppercase tracking-widest font-mono font-bold">ERP de Gestão Comercial</p>
@@ -541,9 +556,12 @@ export default function LoginModule({
             
             {/* Mobile Header Logo */}
             <div className="flex lg:hidden items-center gap-3 justify-center mb-6">
-              <div className="bg-gradient-to-tr from-[#FF6B00] to-orange-500 w-10 h-10 rounded-xl flex items-center justify-center font-bold text-lg shadow-lg shadow-orange-500/20 text-white">
-                OST
-              </div>
+              <img
+                src="/src/assets/images/app_logo_1782658148089.jpg"
+                alt="OST Vendas Logo"
+                className="w-10 h-10 rounded-xl object-contain bg-white p-1 shrink-0 shadow-lg shadow-orange-500/20"
+                referrerPolicy="no-referrer"
+              />
               <h2 className="font-extrabold text-base tracking-tight text-white">OST Vendas</h2>
             </div>
 
@@ -929,7 +947,11 @@ export default function LoginModule({
                   <label className="text-xs font-bold text-slate-300 block uppercase tracking-wider">Membro Comercial</label>
                   <select
                     value={selectedEmployeeId}
-                    onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedEmployeeId(e.target.value);
+                      setPin("");
+                      setErrorMessage(null);
+                    }}
                     className="w-full bg-slate-900 border border-slate-800 focus:border-[#FF6B00] rounded-xl py-3 px-3 text-xs text-white outline-none transition font-medium cursor-pointer"
                   >
                     {employees.map(emp => (
@@ -940,78 +962,136 @@ export default function LoginModule({
                   </select>
                 </div>
 
-                <div className="space-y-1.5 text-center">
-                  <label className="text-xs font-bold text-slate-300 block uppercase tracking-wider text-left">Código PIN (4 Dígitos)</label>
-                  <div className="flex justify-center gap-3 py-2">
-                    {[0, 1, 2, 3].map((idx) => (
-                      <div
-                        key={idx}
-                        className={`w-11 h-11 rounded-lg border-2 flex items-center justify-center font-bold text-lg font-mono transition-all ${
-                          pin.length > idx 
-                            ? "bg-slate-900 border-orange-500 text-white animate-bounce" 
-                            : "border-slate-800 bg-slate-950 text-slate-650"
-                        }`}
-                      >
-                        {pin.length > idx ? "●" : ""}
+                {/* Camada opcional de verificação de 'Pin do Operador' */}
+                <div className="flex items-center justify-between bg-slate-900/60 p-3 rounded-xl border border-slate-800/80 text-xs">
+                  <span className="text-slate-300 font-bold">Verificação Estrita de PIN</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={requireOperatorPin}
+                      onChange={(e) => {
+                        setRequireOperatorPin(e.target.checked);
+                        localStorage.setItem("erp_require_operator_pin", String(e.target.checked));
+                        setPin("");
+                        setErrorMessage(null);
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#FF6B00] peer-checked:after:bg-white"></div>
+                  </label>
+                </div>
+
+                {!requireOperatorPin ? (
+                  <div className="space-y-3 pt-2">
+                    <div className="p-3 bg-emerald-950/20 border border-emerald-500/15 text-emerald-400 text-xs rounded-xl flex items-start gap-2.5 animate-in slide-in-from-top-1">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">Acesso Rápido Ativo</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          O PIN individual está desativado para conveniência. Pode iniciar sessão diretamente apenas selecionando o operador acima.
+                        </p>
                       </div>
-                    ))}
-                  </div>
-
-                  {/* Virtual keyboard simulation */}
-                  <div className="grid grid-cols-3 gap-2 max-w-[240px] mx-auto pt-2">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                      <button
-                        key={num}
-                        type="button"
-                        onClick={() => {
-                          if (pin.length < 4) {
-                            const newVal = pin + num;
-                            setPin(newVal);
-                            if (newVal.length === 4) handlePinLoginSimulated(newVal);
-                          }
-                        }}
-                        className="p-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold text-xs font-mono transition cursor-pointer"
-                      >
-                        {num}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setPin("")}
-                      className="p-2.5 bg-slate-950 hover:bg-slate-900 text-red-400 font-bold text-[10px] rounded-lg transition cursor-pointer"
-                    >
-                      Limpar
-                    </button>
+                    </div>
+                    
                     <button
                       type="button"
                       onClick={() => {
-                        if (pin.length < 4) {
-                          const newVal = pin + "0";
-                          setPin(newVal);
-                          if (newVal.length === 4) handlePinLoginSimulated(newVal);
+                        const match = employees.find(emp => emp.id === selectedEmployeeId);
+                        if (match) {
+                          triggerLoadingPipeline(match, "OST Comércio Geral");
                         }
                       }}
-                      className="p-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold text-xs font-mono transition cursor-pointer"
+                      className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-[#FF6B00] hover:to-orange-600 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg shadow-orange-950/20 hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2"
                     >
-                      0
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (pin.length > 0) {
-                          setPin(pin.slice(0, -1));
-                        }
-                      }}
-                      className="p-2.5 bg-slate-950 hover:bg-slate-900 text-slate-400 font-bold text-[10px] rounded-lg transition cursor-pointer"
-                    >
-                      Apagar
+                      <ShieldCheck className="w-4 h-4 text-white shrink-0" />
+                      <span>Entrar como {employees.find(emp => emp.id === selectedEmployeeId)?.name || "Operador"}</span>
                     </button>
                   </div>
-                </div>
+                ) : (
+                  <div className="space-y-4 animate-in fade-in duration-300">
+                    <div className="space-y-1.5 text-center">
+                      <label className="text-xs font-bold text-slate-300 block uppercase tracking-wider text-left">Código PIN (4 Dígitos)</label>
+                      <div className="flex justify-center gap-3 py-2">
+                        {[0, 1, 2, 3].map((idx) => (
+                          <div
+                            key={idx}
+                            className={`w-11 h-11 rounded-lg border-2 flex items-center justify-center font-bold text-lg font-mono transition-all ${
+                              pin.length > idx 
+                                ? "bg-slate-900 border-orange-500 text-white animate-bounce" 
+                                : "border-slate-800 bg-slate-950 text-slate-650"
+                            }`}
+                          >
+                            {pin.length > idx ? "●" : ""}
+                          </div>
+                        ))}
+                      </div>
 
-                <div className="text-[10px] text-slate-500 border border-slate-800/60 p-2.5 rounded-lg text-center leading-relaxed">
-                  💡 <span className="font-bold text-slate-400">PIN Demonstrativo:</span> Digite <span className="text-orange-400 font-bold">"1234"</span> ou <span className="text-orange-400 font-bold">"2026"</span> para autenticar instantaneamente.
-                </div>
+                      {/* Virtual keyboard simulation */}
+                      <div className="grid grid-cols-3 gap-2 max-w-[240px] mx-auto pt-2">
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                          <button
+                            key={num}
+                            type="button"
+                            onClick={() => {
+                              if (pin.length < 4) {
+                                const newVal = pin + num;
+                                setPin(newVal);
+                                if (newVal.length === 4) handlePinLoginSimulated(newVal);
+                              }
+                            }}
+                            className="p-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold text-xs font-mono transition cursor-pointer"
+                          >
+                            {num}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setPin("")}
+                          className="p-2.5 bg-slate-950 hover:bg-slate-900 text-red-400 font-bold text-[10px] rounded-lg transition cursor-pointer"
+                        >
+                          Limpar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (pin.length < 4) {
+                              const newVal = pin + "0";
+                              setPin(newVal);
+                              if (newVal.length === 4) handlePinLoginSimulated(newVal);
+                            }
+                          }}
+                          className="p-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold text-xs font-mono transition cursor-pointer"
+                        >
+                          0
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (pin.length > 0) {
+                              setPin(pin.slice(0, -1));
+                            }
+                          }}
+                          className="p-2.5 bg-slate-950 hover:bg-slate-900 text-slate-400 font-bold text-[10px] rounded-lg transition cursor-pointer"
+                        >
+                          Apagar
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="text-[10px] text-slate-500 border border-slate-800/60 p-2.5 rounded-lg text-center leading-relaxed">
+                      💡 <span className="font-bold text-slate-400">PIN do Operador:</span> {(() => {
+                        const emp = employees.find(e => e.id === selectedEmployeeId);
+                        const correctPin = emp?.pin || (
+                          selectedEmployeeId === "e1" ? "1234" :
+                          selectedEmployeeId === "e2" ? "2222" :
+                          selectedEmployeeId === "e3" ? "3333" :
+                          selectedEmployeeId === "e4" ? "4444" : "1234"
+                        );
+                        return <>O PIN para este operador é <span className="text-orange-400 font-bold">"{correctPin}"</span>.</>;
+                      })()}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

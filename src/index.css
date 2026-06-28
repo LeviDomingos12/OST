@@ -26,28 +26,58 @@ h1, h2, h3, h4, th {
   font-family: "Space Grotesk", var(--font-sans);
 }
 
+/* Beautiful and highly visible modern scrollbar styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: rgba(241, 245, 249, 0.4);
+  border-radius: 9999px;
 }
 .dark ::-webkit-scrollbar-track {
-  background: #09090b;
+  background: rgba(9, 9, 11, 0.4);
 }
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
+  border: 2.5px solid transparent;
+  background-clip: padding-box;
   border-radius: 9999px;
+  transition: background-color 0.2s ease;
 }
 .dark ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: #3f3f46;
+  border: 2.5px solid transparent;
+  background-clip: padding-box;
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+  border: 1.5px solid transparent;
 }
 .dark ::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+  border: 1.5px solid transparent;
+}
+
+/* Scrollbar thin classes helper */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border: 1px solid transparent;
+}
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
   background: #3f3f46;
+  border: 1px solid transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+.dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
 }
 
 /* Global Component Styling Overrides mapped to Elegant Dark theme */

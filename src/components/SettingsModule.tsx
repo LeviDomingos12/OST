@@ -21,11 +21,13 @@ import {
   Cloud,
   Globe,
   Server,
-  Printer
+  Printer,
+  Palette
 } from "lucide-react";
-import { SystemSettings, UserRole } from "../types";
+import { SystemSettings, UserRole, Employee } from "../types";
 import { initAuth, googleSignIn, logout, getAccessToken } from "../lib/firebase";
 import { sendEmail } from "../lib/gmail";
+import { SYSTEM_THEMES } from "../lib/themes";
 
 interface SettingsModuleProps {
   settings: SystemSettings;
@@ -34,6 +36,11 @@ interface SettingsModuleProps {
   currentRole: UserRole;
   currency: string;
   onShowToast?: (message: string, type: "success" | "error" | "info" | "warning", title?: string) => void;
+  activeUser: Employee | null;
+  activeColorTheme: string;
+  onChangeColorTheme: (themeId: string) => void;
+  onExportLocalDB?: () => void;
+  onImportLocalDB?: (jsonData: any) => Promise<boolean> | boolean;
 }
 
 export default function SettingsModule({
@@ -42,7 +49,12 @@ export default function SettingsModule({
   onAddAuditLog,
   currentRole,
   currency,
-  onShowToast
+  onShowToast,
+  activeUser,
+  activeColorTheme,
+  onChangeColorTheme,
+  onExportLocalDB,
+  onImportLocalDB
 }: SettingsModuleProps) {
   const canEdit = currentRole === "ADMIN";
   
@@ -60,6 +72,14 @@ export default function SettingsModule({
   const [reportRecipientEmail, setReportRecipientEmail] = useState(settings.reportRecipientEmail || "");
   const [reportHour, setReportHour] = useState(settings.reportHour || "02:00");
   const [reportFrequency, setReportFrequency] = useState(settings.reportFrequency || "daily");
+  
+  // Custom SMTP Configurations
+  const [smtpEnabled, setSmtpEnabled] = useState(settings.smtpEnabled || false);
+  const [smtpHost, setSmtpHost] = useState(settings.smtpHost || "smtp.gmail.com");
+  const [smtpPort, setSmtpPort] = useState(settings.smtpPort || 587);
+  const [smtpUser, setSmtpUser] = useState(settings.smtpUser || "");
+  const [smtpPassword, setSmtpPassword] = useState(settings.smtpPassword || "");
+  const [smtpSecure, setSmtpSecure] = useState(settings.smtpSecure || false);
   
   // Custom states for dispatcher details
   const [reportFormat, setReportFormat] = useState<"PDF" | "CSV" | "AMBOS">("PDF");
@@ -229,6 +249,83 @@ export default function SettingsModule({
     }
   };
 
+  // 7-day physical JSON backup scheduling states
+  const [lastFullBackupDate, setLastFullBackupDate] = useState<string | null>(null);
+  const [daysSinceLastBackup, setDaysSinceLastBackup] = useState<number | null>(null);
+  const [isBackupRecommended, setIsBackupRecommended] = useState<boolean>(false);
+
+  const checkFullBackupStatus = () => {
+    if (!canEdit) return;
+    
+    const lastBackupStr = localStorage.getItem("lastFullBackupDownloadDate");
+    setLastFullBackupDate(lastBackupStr);
+
+    if (!lastBackupStr) {
+      setIsBackupRecommended(true);
+      setDaysSinceLastBackup(null);
+      return;
+    }
+
+    const lastBackupDateObj = new Date(lastBackupStr);
+    const today = new Date();
+    
+    // Calculate difference in days
+    const diffTime = Math.abs(today.getTime() - lastBackupDateObj.getTime());
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    setDaysSinceLastBackup(diffDays);
+
+    if (diffDays >= 7) {
+      setIsBackupRecommended(true);
+    } else {
+      setIsBackupRecommended(false);
+    }
+  };
+
+  useEffect(() => {
+    if (canEdit) {
+      checkFullBackupStatus();
+      
+      // Check immediately and also set up warning toast if needed after loading is complete
+      const timerId = setTimeout(() => {
+        const lastBackupStr = localStorage.getItem("lastFullBackupDownloadDate");
+        if (!lastBackupStr) {
+          if (onShowToast) {
+            onShowToast("Por razões de segurança, descarregue um backup físico JSON.", "warning", "Backup Físico Recomendado");
+          }
+        } else {
+          const lastBackupDateObj = new Date(lastBackupStr);
+          const diffDays = Math.floor(Math.abs(new Date().getTime() - lastBackupDateObj.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays >= 7 && onShowToast) {
+            onShowToast(`Aviso: Seu último backup físico JSON foi há ${diffDays} dias.`, "warning", "Cópia Física em Atraso");
+          }
+        }
+      }, 6000);
+
+      const interval = setInterval(checkFullBackupStatus, 4 * 60 * 60 * 1000); // Check every 4 hours
+      return () => {
+        clearTimeout(timerId);
+        clearInterval(interval);
+      };
+    }
+  }, [canEdit]);
+
+  const triggerAdminBackupDownload = () => {
+    if (onExportLocalDB) {
+      onExportLocalDB();
+      const nowStr = new Date().toISOString();
+      localStorage.setItem("lastFullBackupDownloadDate", nowStr);
+      setLastFullBackupDate(nowStr);
+      setDaysSinceLastBackup(0);
+      setIsBackupRecommended(false);
+      
+      onAddAuditLog(
+        "Fazer Cópia de Segurança Periódica",
+        "CONFIGURAÇÕES",
+        `Backup físico de 7 dias descarregado com sucesso.`
+      );
+    }
+  };
+
   // Simulation states
   const [isSimulatingMail, setIsSimulatingMail] = useState(false);
   const [simulationLogs, setSimulationLogs] = useState<string[]>([]);
@@ -313,6 +410,13 @@ export default function SettingsModule({
     setReportHour(settings.reportHour || "02:00");
     setReportFrequency(settings.reportFrequency || "daily");
     
+    setSmtpEnabled(settings.smtpEnabled || false);
+    setSmtpHost(settings.smtpHost || "smtp.gmail.com");
+    setSmtpPort(settings.smtpPort || 587);
+    setSmtpUser(settings.smtpUser || "");
+    setSmtpPassword(settings.smtpPassword || "");
+    setSmtpSecure(settings.smtpSecure || false);
+    
     if (settings.cloudBackupEnabled !== undefined) setCloudBackupEnabled(settings.cloudBackupEnabled);
     if (settings.backupFrequency) setBackupFrequency(settings.backupFrequency);
     if (settings.backupCron) setBackupCron(settings.backupCron);
@@ -368,17 +472,23 @@ export default function SettingsModule({
     onUpdateSettings({
       reportRecipientEmail,
       reportHour,
-      reportFrequency: reportFrequency as "daily" | "weekly"
+      reportFrequency: reportFrequency as "daily" | "weekly",
+      smtpEnabled,
+      smtpHost,
+      smtpPort: Number(smtpPort),
+      smtpUser,
+      smtpPassword,
+      smtpSecure
     });
 
     setFeedbackMsg("Configuração de Envio Automático de Relatórios atualizada com sucesso!");
     onAddAuditLog(
       "Alteração de Envio Automático",
       "CONFIGURAÇÕES",
-      `Agendamento configurado: API Gmail OAuth2, Destino: ${reportRecipientEmail}, Frequência: ${reportFrequency}, Horário: ${reportHour}.`
+      `Agendamento configurado: SMTP Habilitado: ${smtpEnabled ? "Sim" : "Não"}, Servidor: ${smtpHost}:${smtpPort}, Destino: ${reportRecipientEmail}, Frequência: ${reportFrequency}, Horário: ${reportHour}.`
     );
     if (onShowToast) {
-      onShowToast("Configuração do Gmail OAuth2 salvos com sucesso!", "success", "Gmail Gravado");
+      onShowToast("Definições de e-mail e SMTP salvas com sucesso!", "success", "E-mail Gravado");
     }
 
     setTimeout(() => setFeedbackMsg(""), 2200);
@@ -392,13 +502,14 @@ export default function SettingsModule({
       return;
     }
 
-    if (needsAuth) {
+    if (!smtpEnabled && needsAuth) {
       if (onShowToast) onShowToast("Por favor autentique-se com o Gmail primeiro.", "warning");
       return;
     }
 
+    const modeLabel = smtpEnabled ? `via Servidor SMTP (${smtpHost})` : "através da sua conta Gmail";
     const confirmed = window.confirm(
-      `Deseja enviar um e-mail de teste agora para ${reportRecipientEmail} através da sua conta Gmail?`
+      `Deseja enviar um e-mail de teste agora para ${reportRecipientEmail} ${modeLabel}?`
     );
     if (!confirmed) return;
 
@@ -406,36 +517,77 @@ export default function SettingsModule({
     setSimulationLogs([]);
 
     const timeString = new Date().toLocaleTimeString();
-    setSimulationLogs(prev => [...prev, `[${timeString}] 📤 Preparando relatório de teste via Gmail API...`]);
-    setSimulationLogs(prev => [...prev, `[${timeString}] 🔑 Utilizando token OAuth2 Firebase Auth de ${gmailUser?.email}...`]);
-    
-    try {
-      const emailBody = `
-        <h1>Relatório de Sistema de Vendas OST</h1>
-        <p>Este é um envio automatizado de faturas, recibos ou relatórios financeiros.</p>
-        <p>Integração Firebase OAuth2 configurada com sucesso e a utilizar a API Oficial do Gmail.</p>
-      `;
 
-      await sendEmail({
-        to: reportRecipientEmail,
-        subject: "Relatório Automatizado OST Vendas (Teste API Gmail)",
-        body: emailBody,
-        isHtml: true
-      });
-
-      setSimulationLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✔️ E-mail enviado com sucesso via Gmail API!`]);
+    if (smtpEnabled) {
+      setSimulationLogs(prev => [...prev, `[${timeString}] 📤 Estabelecendo ligação ao servidor SMTP: ${smtpHost}:${smtpPort}...`]);
+      setSimulationLogs(prev => [...prev, `[${timeString}] 🔒 SSL/TLS: ${smtpSecure ? "Ativo" : "Inativo"} | Autenticação: ${smtpUser ? "Sim" : "Não"}...`]);
       
-      onAddAuditLog(
-        "Envio de Teste Gmail",
-        "CONFIGURAÇÕES",
-        `Envio manual de relatório via Gmail API OAuth2 para ${reportRecipientEmail}.`
-      );
-      if (onShowToast) onShowToast(`E-mail enviado para ${reportRecipientEmail} com sucesso!`, "success");
-    } catch (error: any) {
-      setSimulationLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Erro ao enviar email: ${error.message}`]);
-      if (onShowToast) onShowToast(`Erro ao enviar: ${error.message}`, "error");
-    } finally {
-      setIsSimulatingMail(false);
+      try {
+        const response = await fetch("/api/email/test-smtp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            smtpHost,
+            smtpPort,
+            smtpUser,
+            smtpPassword,
+            smtpSecure,
+            recipient: reportRecipientEmail
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Erro desconhecido ao conectar ao servidor SMTP.");
+        }
+
+        setSimulationLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✔️ ${data.message}`]);
+        
+        onAddAuditLog(
+          "Envio de Teste SMTP",
+          "CONFIGURAÇÕES",
+          `Envio manual de e-mail de teste via SMTP customizado (${smtpHost}:${smtpPort}) para ${reportRecipientEmail}.`
+        );
+        if (onShowToast) onShowToast(`E-mail enviado via SMTP com sucesso para ${reportRecipientEmail}!`, "success");
+      } catch (error: any) {
+        setSimulationLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Erro SMTP: ${error.message}`]);
+        if (onShowToast) onShowToast(`Erro SMTP: ${error.message}`, "error");
+      } finally {
+        setIsSimulatingMail(false);
+      }
+    } else {
+      setSimulationLogs(prev => [...prev, `[${timeString}] 📤 Preparando relatório de teste via Gmail API...`]);
+      setSimulationLogs(prev => [...prev, `[${timeString}] 🔑 Utilizando token OAuth2 Firebase Auth de ${gmailUser?.email}...`]);
+      
+      try {
+        const emailBody = `
+          <h1>Relatório de Sistema de Vendas OST</h1>
+          <p>Este é um envio automatizado de faturas, recibos ou relatórios financeiros.</p>
+          <p>Integração Firebase OAuth2 configurada com sucesso e a utilizar a API Oficial do Gmail.</p>
+        `;
+
+        await sendEmail({
+          to: reportRecipientEmail,
+          subject: "Relatório Automatizado OST Vendas (Teste API Gmail)",
+          body: emailBody,
+          isHtml: true
+        });
+
+        setSimulationLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✔️ E-mail enviado com sucesso via Gmail API!`]);
+        
+        onAddAuditLog(
+          "Envio de Teste Gmail",
+          "CONFIGURAÇÕES",
+          `Envio manual de relatório via Gmail API OAuth2 para ${reportRecipientEmail}.`
+        );
+        if (onShowToast) onShowToast(`E-mail enviado para ${reportRecipientEmail} com sucesso!`, "success");
+      } catch (error: any) {
+        setSimulationLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Erro ao enviar email: ${error.message}`]);
+        if (onShowToast) onShowToast(`Erro ao enviar: ${error.message}`, "error");
+      } finally {
+        setIsSimulatingMail(false);
+      }
     }
   };
 
@@ -614,6 +766,96 @@ export default function SettingsModule({
         </div>
       )}
 
+      {/* 7-Day Backup Recommendation Banner */}
+      {canEdit && isBackupRecommended && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm shadow-amber-500/5">
+          <div className="flex items-start gap-3">
+            <div className="bg-amber-500 text-slate-950 p-2.5 rounded-xl shrink-0 mt-0.5">
+              <Database className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="font-bold text-amber-500 text-sm">Download de Cópia Física Requerido (7 Dias)</h4>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+                {daysSinceLastBackup === null 
+                  ? "Nunca efetuou uma cópia de segurança física do banco de dados completo neste dispositivo. Descarregue uma cópia agora para salvaguardar os seus dados operacionais e fiscais."
+                  : `Já se passaram ${daysSinceLastBackup} dias desde o seu último download de backup JSON do banco de dados. Para evitar perda de dados, recomendamos que descarregue um novo arquivo agora.`
+                }
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={triggerAdminBackupDownload}
+            className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-4 rounded-xl text-xs flex items-center gap-1.5 transition shrink-0 shadow-md shadow-amber-600/20 cursor-pointer"
+          >
+            <Download className="w-4 h-4 shrink-0" />
+            Descarregar Backup JSON
+          </button>
+        </div>
+      )}
+
+      {/* 10-THEME COLOR PALETTE SELECTION FOR EACH OPERATOR */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div className="flex items-center gap-2.5 text-orange-600">
+          <Palette className="w-5 h-5 text-orange-500" />
+          <div>
+            <h3 className="font-bold text-slate-850 text-sm">Personalização de Temas & Cores do ERP</h3>
+            <p className="text-[11px] text-slate-400">Selecione o seu tema preferido. As preferências de cor são salvas por operador de forma autónoma e aplicadas em todo o sistema.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3.5 pt-2">
+          {SYSTEM_THEMES.map((theme) => {
+            const isSelected = activeColorTheme === theme.id;
+            return (
+              <button
+                key={theme.id}
+                type="button"
+                onClick={() => {
+                  onChangeColorTheme(theme.id);
+                  if (onShowToast) {
+                    onShowToast(`Tema '${theme.name}' aplicado com sucesso!`, "success", "Identidade Visual");
+                  }
+                  onAddAuditLog(
+                    "Alteração de Tema",
+                    "SISTEMA",
+                    `Operador ${activeUser?.name || "Desconhecido"} alterou o tema visual para ${theme.name}.`
+                  );
+                }}
+                className={`p-3.5 rounded-xl border text-left transition relative flex flex-col justify-between h-24 hover:scale-[1.02] active:scale-[0.99] group ${
+                  isSelected 
+                    ? "border-orange-500 bg-orange-50/10 shadow-sm" 
+                    : "border-slate-200 bg-slate-50/30 hover:bg-slate-50 hover:border-slate-300"
+                }`}
+              >
+                {/* Colored circles showing the scheme */}
+                <div className="flex gap-1.5 items-center">
+                  <div className="w-4 h-4 rounded-full border border-white shadow-sm shrink-0" style={{ backgroundColor: theme.primary }} />
+                  <div className="w-3.5 h-3.5 rounded-full border border-white shadow-sm shrink-0 -ml-2.5" style={{ backgroundColor: theme.hover }} />
+                  <div className="w-3 h-3 rounded-full border border-white shadow-sm shrink-0 -ml-2.5" style={{ backgroundColor: theme.accentBg }} />
+                </div>
+
+                <div className="space-y-0.5">
+                  <p className="font-extrabold text-[10px] text-slate-500 uppercase tracking-wider group-hover:text-slate-700 transition">
+                    {theme.name.split(" ")[0]}
+                  </p>
+                  <p className="text-[11px] font-bold text-slate-800 line-clamp-1">
+                    {theme.name}
+                  </p>
+                </div>
+
+                {/* Selected Checkmark in Top-Right */}
+                {isSelected && (
+                  <span className="absolute top-3 right-3 w-4 h-4 rounded-full bg-orange-500 text-white flex items-center justify-center text-[9px] font-bold shadow-sm shadow-orange-500/30 animate-in zoom-in-50 duration-150">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Grid: Left Company profiles, Right Gateway integrations & backups */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 text-xs md:text-xs text-slate-800">
         
@@ -772,6 +1014,126 @@ export default function SettingsModule({
                 <Upload className="w-4 h-4 shrink-0" />
                 Restaurar Configuração
               </button>
+            </div>
+
+            {/* ADMIN-ONLY FULL LOCAL DATABASE BACKUP & RESTORE */}
+            <div className="border-t border-slate-800 pt-4 mt-2 space-y-2.5">
+              <div className="flex items-center gap-1.5 text-xs text-amber-400 font-bold">
+                <Shield className="w-3.5 h-3.5 shrink-0" />
+                <span>Exportação & Restauro de Banco de Dados Completo (ADMIN)</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Faça o download de uma cópia integral do banco de dados em formato JSON contendo todos os registos operacionais (Produtos, Clientes, Vendas, Caixa, Staff e Definições) para total segurança em modo offline.
+              </p>
+
+              {/* 7-Day Backup Scheduling info badge */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800/80 space-y-2 text-[11px]">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-medium">Agendamento de Cópia Física:</span>
+                  <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full font-bold text-[9.5px]">
+                    Cada 7 Dias de Uso
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-medium">Último Download:</span>
+                  <span className="font-mono text-slate-200">
+                    {lastFullBackupDate 
+                      ? new Date(lastFullBackupDate).toLocaleDateString("pt-MZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) 
+                      : "Nunca realizado"
+                    }
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-medium">Estado do Backup:</span>
+                  {isBackupRecommended ? (
+                    <span className="text-amber-500 font-bold flex items-center gap-1">
+                      ⚠️ Em atraso ({daysSinceLastBackup === null ? "Pendente" : `${daysSinceLastBackup} dias`})
+                    </span>
+                  ) : (
+                    <span className="text-emerald-500 font-bold flex items-center gap-1">
+                      ✅ Em dia (Próximo em {7 - (daysSinceLastBackup || 0)} dias)
+                    </span>
+                  )}
+                </div>
+              </div>
+              
+              <div className="flex gap-2 text-xs pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentRole !== "ADMIN") {
+                      if (onShowToast) {
+                        onShowToast("Apenas utilizadores com privilégios de Administrador (ADMIN) podem exportar a base de dados completa.", "error", "Permissão Negada");
+                      }
+                      return;
+                    }
+                    triggerAdminBackupDownload();
+                  }}
+                  className={`w-1/2 font-bold py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                    currentRole === "ADMIN" 
+                      ? "bg-amber-600 hover:bg-amber-700 text-white border border-amber-500 shadow-sm shadow-amber-600/10" 
+                      : "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-50"
+                  }`}
+                  title={currentRole !== "ADMIN" ? "Restrito para Administradores" : "Exportar base de dados completa para JSON"}
+                >
+                  <Download className="w-4 h-4 shrink-0" />
+                  Exportar DB (JSON)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentRole !== "ADMIN") {
+                      if (onShowToast) {
+                        onShowToast("Apenas utilizadores com privilégios de Administrador (ADMIN) podem restaurar a base de dados completa.", "error", "Permissão Negada");
+                      }
+                      return;
+                    }
+                    document.getElementById("admin-db-restore-picker")?.click();
+                  }}
+                  className={`w-1/2 font-bold py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                    currentRole === "ADMIN" 
+                      ? "bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30" 
+                      : "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-50"
+                  }`}
+                  title={currentRole !== "ADMIN" ? "Restrito para Administradores" : "Restaurar base de dados completa a partir de um JSON"}
+                >
+                  <input 
+                    id="admin-db-restore-picker"
+                    type="file"
+                    accept=".json"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      
+                      try {
+                        const text = await file.text();
+                        const parsed = JSON.parse(text);
+                        if (!parsed.app || !parsed.data) {
+                          if (onShowToast) {
+                            onShowToast("O ficheiro carregado não é um backup válido de banco de dados do OST Vendas.", "error", "Erro de Backup");
+                          }
+                          return;
+                        }
+                        
+                        if (onImportLocalDB) {
+                          const success = await onImportLocalDB(parsed.data);
+                          if (success && onShowToast) {
+                            onShowToast("Banco de dados local restaurado com sucesso!", "success", "Cópia Restaurada");
+                          }
+                        }
+                      } catch (err) {
+                        if (onShowToast) {
+                          onShowToast("Falha ao analisar o ficheiro JSON de backup.", "error", "Erro de Ficheiro");
+                        }
+                      }
+                    }}
+                  />
+                  <Upload className="w-4 h-4 shrink-0" />
+                  Restaurar DB (JSON)
+                </button>
+              </div>
             </div>
           </div>
 
@@ -974,53 +1336,142 @@ export default function SettingsModule({
         </div>
 
         <form onSubmit={handleSaveEmailConfig} className="grid grid-cols-1 lg:grid-cols-3 gap-5 text-slate-800 text-xs">
-          {/* SMTP Configuration column -> Gmail OAuth */}
+          {/* Email dispatch provider column: Gmail API or Custom SMTP */}
           <div className="space-y-3.5">
             <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1.5 border-b pb-1 border-slate-100">
               <Globe className="w-3.5 h-3.5 text-slate-400" />
-              Autenticação da Conta Emissora (Gmail)
+              Provedor de E-mail Emissor
             </h4>
-            
-            <p className="text-[11px] text-slate-500">
-              Conecte a conta Gmail oficial da empresa. Esta conta será utilizada para disparar os e-mails e faturas em nome da empresa através da API oficial do Google.
-            </p>
 
-            <div className="mt-4 flex flex-col gap-3">
-              {needsAuth ? (
+            {/* Toggle Selector */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Método de Envio</label>
+              <div className="flex gap-1.5 p-1 bg-slate-100 rounded-xl">
                 <button
                   type="button"
-                  onClick={handleGmailLogin}
-                  disabled={isLoggingIn}
-                  className="flex items-center justify-center gap-3 w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-2.5 px-4 rounded-xl transition shadow-sm"
+                  onClick={() => setSmtpEnabled(false)}
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-center font-bold text-[11px] transition cursor-pointer ${!smtpEnabled ? "bg-white text-orange-600 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
                 >
-                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-5 h-5">
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                    <path fill="none" d="M0 0h48v48H0z"></path>
-                  </svg>
-                  {isLoggingIn ? "Conectando..." : "Vincular Conta Google"}
+                  Gmail API
                 </button>
-              ) : (
-                <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-emerald-600" />
-                    <div>
-                      <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-wide">Conta Vinculada</p>
-                      <p className="text-xs font-semibold text-emerald-700">{gmailUser?.email}</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleGmailLogout}
-                    className="text-[10px] bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-700 font-bold py-1 px-2.5 rounded shadow-sm transition"
-                  >
-                    Desvincular
-                  </button>
-                </div>
-              )}
+                <button
+                  type="button"
+                  onClick={() => setSmtpEnabled(true)}
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-center font-bold text-[11px] transition cursor-pointer ${smtpEnabled ? "bg-white text-orange-600 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+                >
+                  SMTP Personalizado
+                </button>
+              </div>
             </div>
+
+            {!smtpEnabled ? (
+              <div className="space-y-3">
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Conecte a conta Gmail oficial da empresa. Esta conta será utilizada para disparar os e-mails e faturas através da API oficial do Google.
+                </p>
+
+                <div className="pt-1 flex flex-col gap-3">
+                  {needsAuth ? (
+                    <button
+                      type="button"
+                      onClick={handleGmailLogin}
+                      disabled={isLoggingIn}
+                      className="flex items-center justify-center gap-3 w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-2.5 px-4 rounded-xl transition shadow-sm cursor-pointer"
+                    >
+                      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-5 h-5 shrink-0">
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                        <path fill="none" d="M0 0h48v48H0z"></path>
+                      </svg>
+                      {isLoggingIn ? "Conectando..." : "Vincular Conta Google"}
+                    </button>
+                  ) : (
+                    <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <div className="overflow-hidden">
+                          <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-wide">Conta Vinculada</p>
+                          <p className="text-xs font-semibold text-emerald-700 truncate">{gmailUser?.email}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleGmailLogout}
+                        className="text-[10px] bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-700 font-bold py-1 px-2.5 rounded shadow-sm transition shrink-0 cursor-pointer"
+                      >
+                        Desvincular
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200 animate-in fade-in-50 duration-150">
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-2 space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Servidor Host</label>
+                    <input
+                      type="text"
+                      required
+                      value={smtpHost}
+                      onChange={(e) => setSmtpHost(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-slate-350 text-[11px]"
+                      placeholder="smtp.mailtrap.io"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Porta</label>
+                    <input
+                      type="number"
+                      required
+                      value={smtpPort}
+                      onChange={(e) => setSmtpPort(Number(e.target.value))}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-slate-350 text-[11px]"
+                      placeholder="587"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Usuário / E-mail</label>
+                  <input
+                    type="text"
+                    required
+                    value={smtpUser}
+                    onChange={(e) => setSmtpUser(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-slate-350 text-[11px]"
+                    placeholder="exemplo@provedor.com"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Senha</label>
+                  <input
+                    type="password"
+                    required
+                    value={smtpPassword}
+                    onChange={(e) => setSmtpPassword(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-slate-350 text-[11px]"
+                    placeholder="••••••••••••"
+                  />
+                </div>
+
+                <div className="pt-1 flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    id="smtpSecure"
+                    checked={smtpSecure}
+                    onChange={(e) => setSmtpSecure(e.target.checked)}
+                    className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <label htmlFor="smtpSecure" className="text-[10.5px] font-semibold text-slate-600 cursor-pointer select-none">
+                    Utilizar Conexão Segura (SSL/TLS)
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Trigger Frequency / Recipient Destination Column */}

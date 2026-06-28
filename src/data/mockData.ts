@@ -26,10 +26,10 @@ export const initialCustomers: Customer[] = [
 ];
 
 export const initialEmployees: Employee[] = [
-  { id: "e1", name: "Levi Domingos", role: "Administrador Completo", contact: "841234567", salary: 85000, admissionDate: "2024-01-10", status: "ACTIVE" },
-  { id: "e2", name: "Inácio Macamo", role: "Supervisor de Vendas", contact: "859923881", salary: 45000, admissionDate: "2025-03-15", status: "ACTIVE" },
-  { id: "e3", name: "Marta Ubisse", role: "Operadora de Caixa / Vendas", contact: "823301923", salary: 22000, admissionDate: "2025-09-01", status: "ACTIVE" },
-  { id: "e4", name: "Délio Chiponde", role: "Operador de Caixa", contact: "867712399", salary: 22000, admissionDate: "2026-01-15", status: "ACTIVE" }
+  { id: "e1", name: "Levi Domingos", role: "Administrador Completo", contact: "841234567", salary: 85000, admissionDate: "2024-01-10", status: "ACTIVE", pin: "1234", email: "levidomingos12@gmail.com" },
+  { id: "e2", name: "Inácio Macamo", role: "Supervisor de Vendas", contact: "859923881", salary: 45000, admissionDate: "2025-03-15", status: "ACTIVE", pin: "2222", email: "inacio.macamo@gmail.com" },
+  { id: "e3", name: "Marta Ubisse", role: "Operadora de Caixa / Vendas", contact: "823301923", salary: 22000, admissionDate: "2025-09-01", status: "ACTIVE", pin: "3333", email: "marta.ubisse@gmail.com" },
+  { id: "e4", name: "Délio Chiponde", role: "Operador de Caixa", contact: "867712399", salary: 22000, admissionDate: "2026-01-15", status: "ACTIVE", pin: "4444", email: "delio.chiponde@gmail.com" }
 ];
 
 export const initialCashFlow: CashFlowEntry[] = [
@@ -108,10 +108,17 @@ export const defaultSettings: SystemSettings = {
   reportRecipientEmail: "levidomingos12@gmail.com",
   reportHour: "02:00",
   reportFrequency: "daily",
+  smtpEnabled: false,
+  smtpHost: "smtp.gmail.com",
+  smtpPort: 587,
+  smtpUser: "",
+  smtpPassword: "",
+  smtpSecure: false,
   slogan: "Controle Total do Seu Negócio em Uma Única Plataforma",
   storeAddress: "Av. Marginal, Kiosk Nº 14, Maputo, Moçambique",
   storeContact: "+258 84 900 1200",
-  defaultVat: 16
+  defaultVat: 16,
+  theme: "laranja"
 };
 
 export interface MasterclassVideo {

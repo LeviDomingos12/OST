@@ -72,9 +72,12 @@ export default function Sidebar({
     <aside className="w-72 bg-zinc-900 text-slate-100 flex flex-col border-r border-zinc-850 shrink-0 h-screen overflow-y-auto">
       {/* Brand Header */}
       <div className="p-6 border-b border-zinc-800/80 flex items-center gap-3">
-        <div className="bg-gradient-to-tr from-amber-500 to-amber-600 w-11 h-11 rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shadow-amber-950/20 text-zinc-950">
-          OST
-        </div>
+        <img
+          src="/src/assets/images/app_logo_1782658148089.jpg"
+          alt="OST Vendas Logo"
+          className="w-11 h-11 rounded-xl object-contain bg-white p-1 shrink-0"
+          referrerPolicy="no-referrer"
+        />
         <div>
           <h1 className="font-semibold tracking-tight leading-none text-slate-100">OST Vendas</h1>
           <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">Comercial v1.0</span>

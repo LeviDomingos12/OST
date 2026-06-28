@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
+import nodemailer from "nodemailer";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { initializeApp } from "firebase/app";
@@ -228,25 +229,83 @@ Retorne no formato JSON abaixo:
     }
   });
 
-  // API Route - Email sending simulation
+  // API Route - Email sending simulation/SMTP dispatch
   app.post("/api/email/send-report", async (req, res) => {
     try {
       const { recipient, frequency, reportBody, simulateError } = req.body;
-      await new Promise(resolve => setTimeout(resolve, 800));
-
-      if (simulateError || !recipient || recipient.includes("erro") || recipient.includes("fail") || !recipient.includes("@")) {
+      
+      if (simulateError) {
         return res.status(400).json({
           success: false,
           error: "Falha na simulação de entrega SMTP: Servidor SMTP recusou as credenciais ou a caixa do destinatário está inacessível. (SMTP-535-Authentication-Failed)"
         });
       }
 
-      res.json({
-        success: true,
-        message: `Relatório automático enviado com sucesso para ${recipient} (${frequency === 'daily' ? 'Diário às 02:00' : 'Frequência Programada'})!`
+      const defaultBody = reportBody || `
+        <h2>Relatório Automatizado de Auditoria e Vendas</h2>
+        <p>Este relatório foi gerado automaticamente pelo sistema OST Vendas.</p>
+        <p>Frequência: ${frequency === "daily" ? "Diário" : "Semanal"}</p>
+        <p>Data de Emissão: ${new Date().toLocaleString("pt-MZ")}</p>
+      `;
+
+      const result = await trySendEmail({
+        to: recipient,
+        subject: `Relatório Automatizado OST Vendas - ${frequency === "daily" ? "Diário" : "Semanal"}`,
+        body: defaultBody,
+        fallbackMessage: `Relatório automático enviado com sucesso para ${recipient} (${frequency === 'daily' ? 'Diário às 02:00' : 'Frequência Programada'})!`
       });
+
+      res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST: Testing Custom SMTP connection and dispatch immediately
+  app.post("/api/email/test-smtp", async (req, res) => {
+    try {
+      const { smtpHost, smtpPort, smtpUser, smtpPassword, smtpSecure, recipient, subject, body } = req.body;
+      if (!smtpHost || !smtpPort || !recipient) {
+        return res.status(400).json({ error: "Parâmetros smtpHost, smtpPort e destinatário são obrigatórios." });
+      }
+
+      console.log(`[SMTP TEST] Testing SMTP connection to ${smtpHost}:${smtpPort} for ${recipient}...`);
+      
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: Number(smtpPort),
+        secure: smtpSecure === true || smtpSecure === "true" || Number(smtpPort) === 465,
+        auth: smtpUser ? {
+          user: smtpUser,
+          pass: smtpPassword,
+        } : undefined,
+        tls: {
+          rejectUnauthorized: false
+        }
+      });
+
+      const mailOptions = {
+        from: smtpUser || "noreply@ostvendas.com",
+        to: recipient,
+        subject: subject || "Teste de Conexão SMTP - OST Vendas",
+        html: body || `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+            <h2 style="color: #f97316; text-align: center;">Teste de SMTP com Sucesso!</h2>
+            <p>Se você recebeu este e-mail, seu servidor SMTP personalizado está devidamente configurado e funcional.</p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 15px 0;" />
+            <p style="font-size: 12px; color: #64748b; text-align: center;">Configurações Utilizadas: Host: ${smtpHost} | Porta: ${smtpPort} | Usuário: ${smtpUser || "Nenhum"}</p>
+          </div>
+        `
+      };
+
+      await transporter.sendMail(mailOptions);
+      res.json({
+        success: true,
+        message: `Conexão SMTP estabelecida e e-mail enviado com sucesso para ${recipient}!`
+      });
+    } catch (err: any) {
+      console.error("[SMTP TEST ERROR]", err);
+      res.status(500).json({ error: err.message || "Erro desconhecido ao conectar ao servidor SMTP." });
     }
   });
 
@@ -271,6 +330,61 @@ Retorne no formato JSON abaixo:
   }
   if (!fs.existsSync(DB_DIR)) {
     fs.mkdirSync(DB_DIR, { recursive: true });
+  }
+
+  // Helper to send real emails via Custom SMTP if configured, or fall back to simulation
+  async function trySendEmail({ to, subject, body, fallbackMessage }: { to: string; subject: string; body: string; fallbackMessage: string }) {
+    const filePath = path.join(DB_DIR, "settings.json");
+    let settings: any = null;
+    if (fs.existsSync(filePath)) {
+      try {
+        settings = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      } catch (e) {
+        console.warn("Failed to parse settings.json for SMTP check:", e);
+      }
+    }
+
+    if (settings && settings.smtpEnabled) {
+      console.log(`[SMTP SENDER] Custom SMTP is enabled. Attempting sending to ${to} via ${settings.smtpHost}...`);
+      const transporter = nodemailer.createTransport({
+        host: settings.smtpHost || "smtp.gmail.com",
+        port: Number(settings.smtpPort || 587),
+        secure: settings.smtpSecure === true || settings.smtpSecure === "true" || Number(settings.smtpPort) === 465,
+        auth: settings.smtpUser ? {
+          user: settings.smtpUser,
+          pass: settings.smtpPassword,
+        } : undefined,
+        tls: {
+          rejectUnauthorized: false
+        }
+      });
+
+      const mailOptions = {
+        from: settings.smtpUser || "noreply@ostvendas.com",
+        to,
+        subject,
+        html: body,
+      };
+
+      await transporter.sendMail(mailOptions);
+      return {
+        success: true,
+        message: `E-mail enviado com sucesso via SMTP real (${settings.smtpHost}) para ${to}!`,
+        viaSmtp: true
+      };
+    }
+
+    // Default simulation fallback
+    console.log(`[SMTP SENDER] Custom SMTP is NOT enabled. Using simulation for ${to}...`);
+    if (!to || to.includes("erro") || to.includes("fail") || !to.includes("@") || to === "vendas.central@ost.co.mz") {
+      throw new Error("O servidor SMTP recusou o envio do e-mail: Conta de e-mail de destino inválida ou indisponível.");
+    }
+
+    return {
+      success: true,
+      message: fallbackMessage,
+      viaSmtp: false
+    };
   }
 
   // GET: Load all existing stateful tables
@@ -1210,19 +1324,28 @@ Retorne no formato JSON abaixo:
     try {
       const { email, invoiceNumber, grandTotal, cashier, customer } = req.body;
       console.log(`[EMAIL DISPATCH] sending invoice ${invoiceNumber} to ${email}`);
-      await new Promise(resolve => setTimeout(resolve, 800)); // simulate latency
 
-      if (!email || email.includes("erro") || email.includes("fail") || !email.includes("@") || email === "vendas.central@ost.co.mz") {
-        return res.status(400).json({
-          success: false,
-          error: `O servidor SMTP recusou o envio da Fatura ${invoiceNumber}: Conta de e-mail de destino inválida ou indisponível.`
-        });
-      }
+      const body = `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <h2 style="color: #ea580c; text-align: center; margin-bottom: 20px;">Fatura Recibo</h2>
+          <p><strong>Fatura Nº:</strong> ${invoiceNumber}</p>
+          <p><strong>Data:</strong> ${new Date().toLocaleString("pt-MZ")}</p>
+          <p><strong>Caixa/Operador:</strong> ${cashier || "Operador"}</p>
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 15px 0;" />
+          <p>Olá <strong>${customer || "Consumidor Geral"}</strong>,</p>
+          <p>Confirmamos a emissão da Fatura-Recibo no valor total de <strong>${Number(grandTotal || 0).toLocaleString()} MT</strong>.</p>
+          <p style="margin-top: 30px; font-size: 12px; color: #64748b; text-align: center;">Obrigado pela sua preferência!</p>
+        </div>
+      `;
 
-      res.json({
-        success: true,
-        message: `Fatura ${invoiceNumber} despachada por e-mail para ${email} com sucesso!`
+      const result = await trySendEmail({
+        to: email,
+        subject: `Fatura Recibo ${invoiceNumber}`,
+        body,
+        fallbackMessage: `Fatura ${invoiceNumber} despachada por e-mail para ${email} com sucesso!`
       });
+
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

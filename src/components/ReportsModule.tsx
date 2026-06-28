@@ -18,6 +18,22 @@ import { Transaction, SystemSettings } from "../types";
 import { sendEmail } from "../lib/gmail";
 import { generateInvoiceEmailHtml } from "../lib/emailTemplate";
 
+const getBase64ImageFromUrl = async (imageUrl: string): Promise<string> => {
+  try {
+    const res = await fetch(imageUrl);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.error("Error loading logo for PDF:", err);
+    return "";
+  }
+};
+
 interface ReportsModuleProps {
   transactions: Transaction[];
   settings: SystemSettings;
@@ -191,6 +207,11 @@ export default function ReportsModule({
       const { default: autoTable } = await import("jspdf-autotable");
       const doc = new jsPDF();
       
+      const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+      if (logoData) {
+        doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
+      }
+      
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
       doc.text(`FATURA ${showEmailModal.invoiceNumber}`, 14, 20);
@@ -255,7 +276,7 @@ export default function ReportsModule({
     setIsExporting(true);
     setExportMessage("");
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setIsExporting(false);
       
       const fileExt = exportFormat === "PDF" ? "pdf" : "csv";
@@ -303,6 +324,11 @@ export default function ReportsModule({
           const titleLabel = reportType === "SALES" ? "Vendas e Faturamento" : reportType === "FINANCE" ? "Demonstrativo Financeiro" : "Apuração Fiscal de IVA";
           
           const doc = new jsPDF();
+          
+          const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+          if (logoData) {
+            doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
+          }
           
           doc.setFontSize(18);
           doc.setFont("helvetica", "bold");
@@ -706,6 +732,11 @@ export default function ReportsModule({
                   const { jsPDF } = await import("jspdf");
                   const { default: autoTable } = await import("jspdf-autotable");
                   const doc = new jsPDF();
+                  
+                  const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+                  if (logoData) {
+                    doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
+                  }
                   
                   doc.setFontSize(16);
                   doc.setFont("helvetica", "bold");

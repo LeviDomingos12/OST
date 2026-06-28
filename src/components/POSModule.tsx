@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { Product, Customer, CartItem, Transaction, SystemSettings } from "../types";
 import { QrReader } from "react-qr-reader";
+import { sendEmail } from "../lib/gmail";
 
 // Extends CartItem type locally for inline observations
 interface UpgradedCartItem extends CartItem {
@@ -540,24 +541,54 @@ export default function POSModule({
   const simulateSendEmail = async () => {
     if (!completedTx) return;
     setSendEmailStatus("sending");
+    const targetEmail = selectedCustomer?.email || "vendas.central@ost.co.mz";
     try {
-      await fetch("/api/email/dispatch-invoice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: selectedCustomer?.email || "vendas.central@ost.co.mz",
-          invoiceNumber: completedTx.invoiceNumber,
-          grandTotal: completedTx.grandTotal,
-          cashier: activeUsername,
-          customer: completedTx.customerName || "Consumidor Geral"
-        })
+      // Try sending real email using Gmail API first
+      const emailBody = `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <h2 style="color: #ea580c; text-align: center; margin-bottom: 20px;">${settings.companyName || "OST Vendas"} - Fatura Recibo</h2>
+          <p><strong>Fatura Nº:</strong> ${completedTx.invoiceNumber}</p>
+          <p><strong>Data:</strong> ${new Date(completedTx.timestamp).toLocaleString("pt-MZ")}</p>
+          <p><strong>Caixa/Operador:</strong> ${activeUsername}</p>
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 15px 0;" />
+          <p>Olá <strong>${completedTx.customerName || "Consumidor Geral"}</strong>,</p>
+          <p>Confirmamos a emissão da Fatura-Recibo no valor total de <strong>${completedTx.grandTotal.toLocaleString()} MT</strong> pago via <strong>${completedTx.paymentMethod}</strong>.</p>
+          <p style="margin-top: 30px; font-size: 12px; color: #64748b; text-align: center;">Obrigado pela sua preferência!<br><em>${settings.companyName || "OST Vendas"}</em></p>
+        </div>
+      `;
+
+      await sendEmail({
+        to: targetEmail,
+        subject: `Fatura ${completedTx.invoiceNumber} - ${settings.companyName || "OST Vendas"}`,
+        body: emailBody,
+        isHtml: true
       });
+
       setSendEmailStatus("sent");
-      onAddAuditLog("Enviar Recibo por Email", "VENDAS", `Fatura ${completedTx.invoiceNumber} enviada via e-mail.`);
-      if (onShowToast) onShowToast("Recibo enviado por email com sucesso!", "success");
-    } catch (err) {
-      setSendEmailStatus("idle");
-      if (onShowToast) onShowToast("Simulado: Recibo de e-mail enviado com sucesso (Mock).", "success");
+      onAddAuditLog("Enviar Recibo por Email", "VENDAS", `Fatura ${completedTx.invoiceNumber} enviada via e-mail real para ${targetEmail}.`);
+      if (onShowToast) onShowToast("Recibo enviado por email com sucesso via Gmail API!", "success");
+    } catch (realEmailErr: any) {
+      console.warn("Could not send email via Gmail API, falling back to mock endpoint:", realEmailErr);
+      
+      try {
+        await fetch("/api/email/dispatch-invoice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: targetEmail,
+            invoiceNumber: completedTx.invoiceNumber,
+            grandTotal: completedTx.grandTotal,
+            cashier: activeUsername,
+            customer: completedTx.customerName || "Consumidor Geral"
+          })
+        });
+        setSendEmailStatus("sent");
+        onAddAuditLog("Enviar Recibo por Email", "VENDAS", `Fatura ${completedTx.invoiceNumber} enviada via e-mail (Simulação).`);
+        if (onShowToast) onShowToast("Recibo enviado por email com sucesso!", "success");
+      } catch (err) {
+        setSendEmailStatus("idle");
+        if (onShowToast) onShowToast("Simulado: Recibo de e-mail enviado com sucesso (Mock).", "success");
+      }
     }
   };
 

@@ -103,6 +103,8 @@ export interface Employee {
   salary: number;
   admissionDate: string;
   status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
+  pin?: string;
+  email?: string;
 }
 
 export interface SystemSettings {
@@ -116,8 +118,15 @@ export interface SystemSettings {
   smsGateway: string;
   smtpServer: string;
   reportRecipientEmail: string;
+  theme?: string; // Color theme ID, e.g. "laranja", "azul", etc.
   reportHour: string;
   reportFrequency: "daily" | "weekly";
+  smtpEnabled?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUser?: string;
+  smtpPassword?: string;
+  smtpSecure?: boolean;
   slogan?: string;
   storeAddress?: string;
   storeContact?: string;

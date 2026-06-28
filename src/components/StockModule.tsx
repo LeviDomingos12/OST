@@ -53,6 +53,22 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Product, UserRole, Transaction, SystemSettings } from "../types";
 
+const getBase64ImageFromUrl = async (imageUrl: string): Promise<string> => {
+  try {
+    const res = await fetch(imageUrl);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.error("Error loading logo for PDF:", err);
+    return "";
+  }
+};
+
 interface StockModuleProps {
   products: Product[];
   transactions?: Transaction[];
@@ -775,8 +791,13 @@ export default function StockModule({
     };
   }, [products, transactions, reportStartDate, reportEndDate, reportType, reportCategory, reportSearchQuery]);
 
-  const handleExportReportPDF = () => {
+  const handleExportReportPDF = async () => {
     const doc = new jsPDF();
+    
+    const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+    if (logoData) {
+      doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
+    }
     
     // Header
     doc.setFontSize(18);
