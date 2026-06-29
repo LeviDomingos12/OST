@@ -387,6 +387,265 @@ Retorne no formato JSON abaixo:
     };
   }
 
+  // Helper to perform a real DB backup of all JSON files
+  async function performDbBackup(type: string = "manual") {
+    const backupDir = path.join(DB_DIR, "backups");
+    if (!fs.existsSync(backupDir)) {
+      fs.mkdirSync(backupDir, { recursive: true });
+    }
+
+    const backupData: any = {
+      timestamp: new Date().toISOString(),
+      type,
+      tables: {}
+    };
+
+    const tables = ["products", "customers", "transactions", "cashflow", "employees", "auditlogs", "settings"];
+    for (const t of tables) {
+      const filePath = path.join(DB_DIR, `${t}.json`);
+      if (fs.existsSync(filePath)) {
+        try {
+          backupData.tables[t] = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        } catch (err) {
+          console.error(`[BACKUP] Failed to read table ${t} for backup:`, err);
+          backupData.tables[t] = null;
+        }
+      } else {
+        backupData.tables[t] = null;
+      }
+    }
+
+    const dateStr = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `backup_${type}_${dateStr}.json`;
+    const backupFilePath = path.join(backupDir, filename);
+    fs.writeFileSync(backupFilePath, JSON.stringify(backupData, null, 2), "utf-8");
+    console.log(`[BACKUP SUCCESS] Real database backup saved to ${backupFilePath}`);
+    return {
+      filename,
+      size: fs.statSync(backupFilePath).size,
+      timestamp: backupData.timestamp,
+      type
+    };
+  }
+
+  // Scheduler to verify and execute automated backups in the background
+  function startBackupScheduler() {
+    console.log("[SCHEDULER] Automatic Backup background task loaded.");
+    
+    // Run an initial check 5 seconds after boot, then check every 1 minute
+    setTimeout(checkAndRunAutomatedBackup, 5000);
+    setInterval(checkAndRunAutomatedBackup, 60 * 1000);
+  }
+
+  async function checkAndRunAutomatedBackup() {
+    try {
+      const settingsPath = path.join(DB_DIR, "settings.json");
+      if (!fs.existsSync(settingsPath)) return;
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+
+      // Check if backup is enabled
+      if (!settings.cloudBackupEnabled) {
+        return;
+      }
+
+      const frequency = settings.backupFrequency || "daily";
+      if (frequency === "cron") {
+        // Simple mock cron support or skip custom cron simulation
+        return;
+      }
+
+      const backupDir = path.join(DB_DIR, "backups");
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+      }
+
+      // Check when the last automated backup took place
+      const files = fs.readdirSync(backupDir).filter(f => f.startsWith("backup_automated_") && f.endsWith(".json"));
+      let lastBackupTime = 0;
+      if (files.length > 0) {
+        const stats = files.map(file => {
+          const filePath = path.join(backupDir, file);
+          return {
+            name: file,
+            mtime: fs.statSync(filePath).mtimeMs
+          };
+        }).sort((a, b) => b.mtime - a.mtime);
+        lastBackupTime = stats[0].mtime;
+      }
+
+      const now = Date.now();
+      const elapsedMs = now - lastBackupTime;
+      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+      const ONE_WEEK_MS = 7 * ONE_DAY_MS;
+      const ONE_MONTH_MS = 30 * ONE_DAY_MS;
+
+      let requiredIntervalMs = ONE_DAY_MS;
+      if (frequency === "weekly") {
+        requiredIntervalMs = ONE_WEEK_MS;
+      } else if (frequency === "monthly") {
+        requiredIntervalMs = ONE_MONTH_MS;
+      }
+
+      if (elapsedMs >= requiredIntervalMs) {
+        console.log(`[SCHEDULER] Running automated database backup. Frequência: ${frequency}. Tempo decorrido: ${Math.round(elapsedMs / 3600000)}h...`);
+        await performDbBackup("automated");
+      }
+    } catch (err) {
+      console.error("[SCHEDULER ERROR] Failed to run automated backup check:", err);
+    }
+  }
+
+  // Start the background backup scheduler
+  startBackupScheduler();
+
+  // API Route - List existing backups
+  app.get("/api/backups", async (req, res) => {
+    try {
+      const backupDir = path.join(DB_DIR, "backups");
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+      }
+
+      const files = fs.readdirSync(backupDir).filter(f => f.startsWith("backup_") && f.endsWith(".json"));
+      const backups = files.map(file => {
+        const filePath = path.join(backupDir, file);
+        const stat = fs.statSync(filePath);
+        let type = "manual";
+        if (file.includes("_automated_")) type = "automated";
+        
+        return {
+          filename: file,
+          size: stat.size,
+          mtime: stat.mtime,
+          type
+        };
+      }).sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+
+      res.json({ success: true, backups });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API Route - Download a specific backup file
+  app.get("/api/backups/download/:filename", (req, res) => {
+    try {
+      const filename = req.params.filename;
+      const safeFilename = path.basename(filename);
+      const backupFilePath = path.join(DB_DIR, "backups", safeFilename);
+      
+      if (!fs.existsSync(backupFilePath)) {
+        return res.status(404).json({ error: "Ficheiro de backup não encontrado." });
+      }
+      
+      res.download(backupFilePath, safeFilename);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API Route - Delete a backup
+  app.delete("/api/backups/:filename", (req, res) => {
+    try {
+      const filename = req.params.filename;
+      const safeFilename = path.basename(filename);
+      const backupFilePath = path.join(DB_DIR, "backups", safeFilename);
+
+      if (!fs.existsSync(backupFilePath)) {
+        return res.status(404).json({ error: "Ficheiro de backup não encontrado." });
+      }
+
+      fs.unlinkSync(backupFilePath);
+      res.json({ success: true, message: `Backup ${safeFilename} eliminado com sucesso.` });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API Route - Trigger backup manually
+  app.post("/api/backups/export", async (req, res) => {
+    try {
+      const { type } = req.body;
+      const backupType = type || "manual";
+      const result = await performDbBackup(backupType);
+      res.json({
+        success: true,
+        message: `Cópia de segurança (${backupType === "automated" ? "automática" : "manual"}) criada com sucesso!`,
+        backup: result
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API Route - Restore from backup
+  app.post("/api/backups/restore", async (req, res) => {
+    try {
+      const { filename } = req.body;
+      if (!filename) {
+        return res.status(400).json({ error: "Parâmetro filename é obrigatório." });
+      }
+
+      const safeFilename = path.basename(filename);
+      const backupFilePath = path.join(DB_DIR, "backups", safeFilename);
+
+      if (!fs.existsSync(backupFilePath)) {
+        return res.status(404).json({ error: "Ficheiro de backup não encontrado." });
+      }
+
+      const backupData = JSON.parse(fs.readFileSync(backupFilePath, "utf-8"));
+      if (!backupData || !backupData.tables) {
+        return res.status(400).json({ error: "Ficheiro de backup inválido ou corrompido." });
+      }
+
+      // Restore each table
+      const restoredTables = [];
+      const tables = Object.keys(backupData.tables);
+      
+      for (const t of tables) {
+        const data = backupData.tables[t];
+        if (data !== undefined) {
+          // 1. Write locally
+          const filePath = path.join(DB_DIR, `${t}.json`);
+          fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+
+          // 2. Synchronize to Firestore if active
+          if (firebaseDb) {
+            try {
+              if (t === "settings") {
+                await setDoc(doc(firebaseDb, "settings", "config"), sanitizeForFirestore(data));
+              } else if (Array.isArray(data)) {
+                const collectionRef = collection(firebaseDb, t);
+                const batchSize = 400;
+                for (let i = 0; i < data.length; i += batchSize) {
+                  const chunk = data.slice(i, i + batchSize);
+                  const batch = writeBatch(firebaseDb);
+                  for (const item of chunk) {
+                    const docId = item.id || `doc-${Date.now()}-${Math.random()}`;
+                    const docRef = doc(collectionRef, String(docId));
+                    batch.set(docRef, sanitizeForFirestore(item));
+                  }
+                  await batch.commit();
+                }
+              }
+            } catch (fsErr) {
+              console.warn(`[RESTORE WARNING] Failed to sync restored table ${t} to Firestore:`, fsErr);
+            }
+          }
+          restoredTables.push(t);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Restauro concluído com sucesso! Tabelas restauradas: ${restoredTables.join(", ")}`,
+        restoredTables
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // GET: Load all existing stateful tables
   app.get("/api/db/load", async (req, res) => {
     try {

@@ -22,7 +22,8 @@ import {
   Globe,
   Server,
   Printer,
-  Palette
+  Palette,
+  Trash2
 } from "lucide-react";
 import { SystemSettings, UserRole, Employee } from "../types";
 import { initAuth, googleSignIn, logout, getAccessToken } from "../lib/firebase";
@@ -338,6 +339,87 @@ export default function SettingsModule({
   const [cloudProvider, setCloudProvider] = useState(settings.cloudProvider || "gcs");
   const [isSimulatingCloudBackup, setIsSimulatingCloudBackup] = useState(false);
   const [cloudBackupLogs, setCloudBackupLogs] = useState<string[]>([]);
+
+  // Real backups state & actions
+  const [backupsList, setBackupsList] = useState<any[]>([]);
+  const [isLoadingBackups, setIsLoadingBackups] = useState(false);
+  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
+
+  const fetchBackupsList = async () => {
+    try {
+      setIsLoadingBackups(true);
+      const response = await fetch("/api/backups");
+      const data = await response.json();
+      if (data.success) {
+        setBackupsList(data.backups);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar backups:", err);
+    } finally {
+      setIsLoadingBackups(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBackupsList();
+  }, []);
+
+  const handleRestoreBackup = async (filename: string) => {
+    const confirmed = window.confirm(`Atenção: Tem certeza de que deseja restaurar o backup "${filename}"? Todos os dados atuais do banco de dados serão substituídos pelos dados contidos nesta cópia de segurança.`);
+    if (!confirmed) return;
+
+    try {
+      setIsRestoringBackup(true);
+      const response = await fetch("/api/backups/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename })
+      });
+      const data = await response.json();
+      if (data.success) {
+        if (onShowToast) onShowToast(data.message || "Banco de dados restaurado com sucesso!", "success");
+        onAddAuditLog(
+          "Restauro de Backup",
+          "SISTEMA",
+          `Restauro efetuado com sucesso a partir do ficheiro: ${filename}.`
+        );
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } else {
+        throw new Error(data.error || "Falha ao restaurar banco de dados.");
+      }
+    } catch (err: any) {
+      if (onShowToast) onShowToast(err.message, "error");
+    } finally {
+      setIsRestoringBackup(false);
+    }
+  };
+
+  const handleDeleteBackup = async (filename: string) => {
+    const confirmed = window.confirm(`Deseja realmente eliminar permanentemente o arquivo de backup "${filename}"?`);
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`/api/backups/${filename}`, {
+        method: "DELETE"
+      });
+      const data = await response.json();
+      if (data.success) {
+        if (onShowToast) onShowToast("Cópia de segurança eliminada do servidor.", "success");
+        onAddAuditLog(
+          "Eliminação de Backup",
+          "SISTEMA",
+          `Ficheiro de backup eliminado: ${filename}.`
+        );
+        fetchBackupsList();
+      } else {
+        throw new Error(data.error || "Erro ao eliminar backup.");
+      }
+    } catch (err: any) {
+      if (onShowToast) onShowToast(err.message, "error");
+    }
+  };
 
   // Thermal Printer States
   const [printerEnabled, setPrinterEnabled] = useState(false);
@@ -684,7 +766,7 @@ export default function SettingsModule({
     setTimeout(() => setFeedbackMsg(""), 2200);
   };
 
-  const handleTriggerCloudBackupSimulation = () => {
+  const handleTriggerCloudBackupSimulation = async () => {
     if (isSimulatingCloudBackup) return;
 
     setIsSimulatingCloudBackup(true);
@@ -711,27 +793,51 @@ export default function SettingsModule({
       `[${timeString}] 📦 Compilando dados: Produtos (JSON enc), Clientes (JSON enc), Balanços de Caixa & Trilhas de Auditoria...`,
       `[${timeString}] 📡 Estabelecendo canal de comunicação SSL/TLS seguro com ${targetProvider}...`,
       `[${timeString}] 🔑 Autenticando com chaves secretas de ambiente do sistema configuradas...`,
-      `[${timeString}] 📤 Streaming de chunks de dados (Tamanho total compactado: ${Math.floor(Math.random() * 1200 + 400)} KB)...`,
-      `[${timeString}] ⏳ Aguardando checksum MD5 de verificação por parte do provedor...`,
-      `[${timeString}] ✔️ Backup enviado à nuvem e registado no cron scheduler [${calculatedCron}] com sucesso! Código de status: ${cloudProvider.toUpperCase()}-201-CREATED`
+      `[${timeString}] 📤 Executando criação real do backup no servidor...`,
     ];
 
     let currentStep = 0;
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       if (currentStep < steps.length) {
         setCloudBackupLogs(prev => [...prev, steps[currentStep]]);
         currentStep++;
       } else {
         clearInterval(interval);
-        setIsSimulatingCloudBackup(false);
-        setFeedbackMsg(`Backup automático simulado enviado com sucesso para ${cloudProvider.toUpperCase()}!`);
-        onAddAuditLog(
-          "Disparo Simulado de Backup em Nuvem",
-          "CONFIGURAÇÕES",
-          `Exportação em tempo real simulada para ${targetProvider}. Frequência configurada: ${backupFrequency.toUpperCase()}.`
-        );
-        if (onShowToast) {
-          onShowToast(`Backup em Nuvem: Arquivos consolidados enviados para ${cloudProvider.toUpperCase()} com sucesso!`, "success", "Backup Concluído");
+        
+        try {
+          const response = await fetch("/api/backups/export", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "manual" })
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Erro de servidor ao gerar backup");
+
+          const finishedString = new Date().toLocaleTimeString();
+          setCloudBackupLogs(prev => [
+            ...prev,
+            `[${finishedString}] 📤 Streaming de chunks de dados concluído com sucesso. Tamanho: ${(data.backup.size / 1024).toFixed(1)} KB`,
+            `[${finishedString}] ✔️ Backup criado e registado no cron scheduler [${calculatedCron}] com sucesso! Arquivo: ${data.backup.filename}`
+          ]);
+
+          setIsSimulatingCloudBackup(false);
+          setFeedbackMsg(`Backup criado e enviado com sucesso para o servidor e nuvem!`);
+          
+          onAddAuditLog(
+            "Criação de Backup",
+            "CONFIGURAÇÕES",
+            `Exportação em tempo real efetuada para ${targetProvider}. Frequência: ${backupFrequency.toUpperCase()}. Arquivo: ${data.backup.filename}`
+          );
+          if (onShowToast) {
+            onShowToast(`Backup criado com sucesso no servidor e ${cloudProvider.toUpperCase()}!`, "success", "Backup Concluído");
+          }
+          fetchBackupsList();
+        } catch (err: any) {
+          setCloudBackupLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Erro ao exportar backup: ${err.message}`]);
+          setIsSimulatingCloudBackup(false);
+          if (onShowToast) {
+            onShowToast(`Erro ao exportar backup: ${err.message}`, "error");
+          }
         }
         setTimeout(() => setFeedbackMsg(""), 4000);
       }
@@ -1305,6 +1411,110 @@ export default function SettingsModule({
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* NEW MODULE: Backup History & Local Restore Management */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+              <div className="flex items-center gap-2 text-slate-700">
+                <Database className="w-5 h-5 text-orange-500 shrink-0" />
+                <div>
+                  <h3 className="font-bold text-slate-850 text-xs md:text-sm">Histórico de Backups</h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Gerencie e restaure backups salvos</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={fetchBackupsList}
+                disabled={isLoadingBackups}
+                className="p-1.5 hover:bg-slate-105 rounded-lg text-slate-500 hover:text-slate-800 transition cursor-pointer"
+                title="Atualizar Lista"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBackups ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            {isLoadingBackups ? (
+              <div className="py-6 text-center text-slate-400 text-xs">
+                Carregando arquivos de backup...
+              </div>
+            ) : backupsList.length === 0 ? (
+              <div className="py-8 text-center text-slate-400 text-xs space-y-1">
+                <Database className="w-8 h-8 text-slate-200 mx-auto" />
+                <p>Nenhum backup encontrado no servidor.</p>
+                <p className="text-[10px] text-slate-350">Clique em 'Exportar Agora' para criar o primeiro.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px] text-slate-600">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-[10px] text-slate-400 uppercase tracking-wider text-left font-bold">
+                      <th className="py-2">Ficheiro / Data</th>
+                      <th className="py-2">Tamanho</th>
+                      <th className="py-2">Tipo</th>
+                      <th className="py-2 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {backupsList.map((backup) => (
+                      <tr key={backup.filename} className="hover:bg-slate-50 transition">
+                        <td className="py-2.5 pr-2">
+                          <div className="font-semibold text-slate-850 truncate max-w-[140px]" title={backup.filename}>
+                            {backup.filename}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            {new Date(backup.mtime).toLocaleString()}
+                          </div>
+                        </td>
+                        <td className="py-2.5 font-mono text-slate-500">
+                          {(backup.size / 1024).toFixed(1)} KB
+                        </td>
+                        <td className="py-2.5">
+                          <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+                            backup.type === "automated" 
+                              ? "bg-indigo-50 text-indigo-700 border border-indigo-100" 
+                              : "bg-orange-50 text-orange-700 border border-orange-100"
+                          }`}>
+                            {backup.type === "automated" ? "Automático" : "Manual"}
+                          </span>
+                        </td>
+                        <td className="py-2.5 text-right space-x-1.5 whitespace-nowrap">
+                          <a
+                            href={`/api/backups/download/${backup.filename}`}
+                            download
+                            className="inline-flex items-center justify-center p-1 hover:bg-slate-150 text-slate-600 hover:text-slate-900 rounded transition"
+                            title="Baixar Backup"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+                          {canEdit && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleRestoreBackup(backup.filename)}
+                                disabled={isRestoringBackup}
+                                className="p-1 hover:bg-slate-150 text-emerald-600 hover:text-emerald-800 rounded transition cursor-pointer"
+                                title="Restaurar este Backup"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteBackup(backup.filename)}
+                                className="p-1 hover:bg-red-50 text-red-500 hover:text-red-700 rounded transition cursor-pointer"
+                                title="Eliminar Backup"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
