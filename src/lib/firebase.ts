@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
-import { getFirestore, doc, getDocFromServer, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, getDocs, onSnapshot } from "firebase/firestore";
+import { getFirestore, doc, getDocFromServer, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, getDocs, onSnapshot, disableNetwork } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 
 // Initialize Firebase App
@@ -161,6 +161,66 @@ export interface FirestoreErrorInfo {
   };
 }
 
+let isQuotaCircuitBroken = false;
+
+// Initialize from localStorage if present to remember across reloads
+if (typeof window !== "undefined") {
+  try {
+    const brokenUntil = localStorage.getItem("firestore_quota_circuit_broken_until");
+    if (brokenUntil && Number(brokenUntil) > Date.now()) {
+      isQuotaCircuitBroken = true;
+      disableNetwork(db).then(() => {
+        console.log("[QUOTA] Firestore network disabled on initialization due to active circuit breaker.");
+      }).catch((e) => {
+        console.warn("Could not disable Firestore network on initialization:", e);
+      });
+    }
+  } catch (e) {
+    // Ignore localStorage errors
+  }
+}
+
+export function breakCircuit() {
+  isQuotaCircuitBroken = true;
+  if (typeof window !== "undefined") {
+    try {
+      // Break circuit for 2 hours
+      localStorage.setItem("firestore_quota_circuit_broken_until", String(Date.now() + 2 * 60 * 60 * 1000));
+    } catch (e) {}
+  }
+
+  // Disable network to stop the background GrpcConnection Write streams and retry loops
+  try {
+    disableNetwork(db).then(() => {
+      console.log("[QUOTA] Firestore network disabled successfully to prevent continuous background exhausted errors.");
+    }).catch((e) => {
+      console.warn("Could not disable Firestore network:", e);
+    });
+  } catch (err) {
+    console.warn("Error invoking disableNetwork:", err);
+  }
+}
+
+export function isCircuitBroken(): boolean {
+  if (isQuotaCircuitBroken) {
+    return true;
+  }
+  if (typeof window !== "undefined") {
+    try {
+      const brokenUntil = localStorage.getItem("firestore_quota_circuit_broken_until");
+      if (brokenUntil && Number(brokenUntil) > Date.now()) {
+        isQuotaCircuitBroken = true;
+        return true;
+      } else if (brokenUntil) {
+        // Expired
+        localStorage.removeItem("firestore_quota_circuit_broken_until");
+        isQuotaCircuitBroken = false;
+      }
+    } catch (e) {}
+  }
+  return false;
+}
+
 export function checkAndNotifyQuota(error: unknown): boolean {
   const errorMsg = error instanceof Error ? error.message : String(error);
   const isQuota = errorMsg.toLowerCase().includes("quota") || 
@@ -168,11 +228,14 @@ export function checkAndNotifyQuota(error: unknown): boolean {
                   errorMsg.toLowerCase().includes("resource-exhausted") || 
                   errorMsg.toLowerCase().includes("limit");
   
-  if (isQuota && typeof window !== "undefined") {
-    console.warn("[QUOTA DETECTED] Firestore quota limit exceeded. Dispatching event...");
-    window.dispatchEvent(new CustomEvent("firestore-quota-exceeded", { 
-      detail: { error: errorMsg } 
-    }));
+  if (isQuota) {
+    breakCircuit();
+    if (typeof window !== "undefined") {
+      console.warn("[QUOTA DETECTED] Firestore quota limit exceeded. Dispatching event...");
+      window.dispatchEvent(new CustomEvent("firestore-quota-exceeded", { 
+        detail: { error: errorMsg } 
+      }));
+    }
   }
   return isQuota;
 }
@@ -277,28 +340,32 @@ export const signUpWithEmail = async (
     };
 
     // Save profile to Firestore usuarios collection
-    try {
-      await setDoc(doc(db, "usuarios", user.uid), sanitizeForFirestore(userProfile));
-    } catch (fsErr: any) {
-      console.warn("Could not save profile to Firestore (probably quota exceeded):", fsErr);
-      checkAndNotifyQuota(fsErr);
+    if (!isCircuitBroken()) {
+      try {
+        await setDoc(doc(db, "usuarios", user.uid), sanitizeForFirestore(userProfile));
+      } catch (fsErr: any) {
+        console.warn("Could not save profile to Firestore (probably quota exceeded):", fsErr);
+        checkAndNotifyQuota(fsErr);
+      }
     }
     
     // Log user creation
-    try {
-      const logId = `log-register-${Date.now()}`;
-      await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
-        id: logId,
-        userId: user.uid,
-        userName: nomeCompleto,
-        action: "Cadastro efetuado",
-        module: "AUTENTICAÇÃO",
-        details: `Utilizador ${nomeCompleto} registou-se no ERP.`,
-        timestamp: new Date().toISOString()
-      }));
-    } catch (logErr: any) {
-      console.warn("Failed to write initial security log:", logErr);
-      checkAndNotifyQuota(logErr);
+    if (!isCircuitBroken()) {
+      try {
+        const logId = `log-register-${Date.now()}`;
+        await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
+          id: logId,
+          userId: user.uid,
+          userName: nomeCompleto,
+          action: "Cadastro efetuado",
+          module: "AUTENTICAÇÃO",
+          details: `Utilizador ${nomeCompleto} registou-se no ERP.`,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (logErr: any) {
+        console.warn("Failed to write initial security log:", logErr);
+        checkAndNotifyQuota(logErr);
+      }
     }
 
     return mapUsuarioToEmployee(userProfile);
@@ -350,31 +417,35 @@ export const signInWithEmail = async (email: string, password: string): Promise<
     }
 
     // Update ultimoLogin timestamp
-    try {
-      const userDocRef = doc(db, "usuarios", user.uid);
-      await updateDoc(userDocRef, {
-        ultimoLogin: new Date().toISOString()
-      });
-    } catch (updateErr: any) {
-      console.warn("Could not update last login timestamp on Firestore:", updateErr);
-      checkAndNotifyQuota(updateErr);
+    if (!isCircuitBroken()) {
+      try {
+        const userDocRef = doc(db, "usuarios", user.uid);
+        await updateDoc(userDocRef, {
+          ultimoLogin: new Date().toISOString()
+        });
+      } catch (updateErr: any) {
+        console.warn("Could not update last login timestamp on Firestore:", updateErr);
+        checkAndNotifyQuota(updateErr);
+      }
     }
 
     // Log login success
-    try {
-      const logId = `log-login-${Date.now()}`;
-      await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
-        id: logId,
-        userId: user.uid,
-        userName: profile.nomeCompleto,
-        action: "Login efetuado",
-        module: "AUTENTICAÇÃO",
-        details: `Login de ${profile.nomeCompleto} via E-mail efetuado com sucesso.`,
-        timestamp: new Date().toISOString()
-      }));
-    } catch (logErr: any) {
-      console.warn("Failed to write login audit log:", logErr);
-      checkAndNotifyQuota(logErr);
+    if (!isCircuitBroken()) {
+      try {
+        const logId = `log-login-${Date.now()}`;
+        await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
+          id: logId,
+          userId: user.uid,
+          userName: profile.nomeCompleto,
+          action: "Login efetuado",
+          module: "AUTENTICAÇÃO",
+          details: `Login de ${profile.nomeCompleto} via E-mail efetuado com sucesso.`,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (logErr: any) {
+        console.warn("Failed to write login audit log:", logErr);
+        checkAndNotifyQuota(logErr);
+      }
     }
 
     return { employee: mapUsuarioToEmployee(profile), branch: profile.empresa };
@@ -382,18 +453,20 @@ export const signInWithEmail = async (email: string, password: string): Promise<
     console.error("Sign in error:", error);
     checkAndNotifyQuota(error);
     // Log login failure
-    try {
-      const logId = `log-fail-${Date.now()}`;
-      await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
-        id: logId,
-        action: "Falha de Login",
-        module: "AUTENTICAÇÃO",
-        details: `Tentativa falhada de login para ${email}: ${error instanceof Error ? error.message : String(error)}`,
-        timestamp: new Date().toISOString()
-      }));
-    } catch (logErr: any) {
-      console.warn("Failed to log login failure:", logErr);
-      checkAndNotifyQuota(logErr);
+    if (!isCircuitBroken()) {
+      try {
+        const logId = `log-fail-${Date.now()}`;
+        await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
+          id: logId,
+          action: "Falha de Login",
+          module: "AUTENTICAÇÃO",
+          details: `Tentativa falhada de login para ${email}: ${error instanceof Error ? error.message : String(error)}`,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (logErr: any) {
+        console.warn("Failed to log login failure:", logErr);
+        checkAndNotifyQuota(logErr);
+      }
     }
     throw error;
   }
@@ -405,18 +478,20 @@ export const recoverPassword = async (email: string): Promise<void> => {
     await sendPasswordResetEmail(auth, email);
     
     // Log password recovery trigger
-    try {
-      const logId = `log-recovery-${Date.now()}`;
-      await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
-        id: logId,
-        action: "Recuperação de Senha",
-        module: "AUTENTICAÇÃO",
-        details: `Solicitado link de recuperação para o e-mail: ${email}`,
-        timestamp: new Date().toISOString()
-      }));
-    } catch (logErr: any) {
-      console.warn("Failed to log password recovery request:", logErr);
-      checkAndNotifyQuota(logErr);
+    if (!isCircuitBroken()) {
+      try {
+        const logId = `log-recovery-${Date.now()}`;
+        await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
+          id: logId,
+          action: "Recuperação de Senha",
+          module: "AUTENTICAÇÃO",
+          details: `Solicitado link de recuperação para o e-mail: ${email}`,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (logErr: any) {
+        console.warn("Failed to log password recovery request:", logErr);
+        checkAndNotifyQuota(logErr);
+      }
     }
   } catch (error) {
     console.error("Password recovery error:", error);
@@ -446,13 +521,15 @@ export const googleSignInAndSync = async (defaultBranch: string = "OST Comércio
         }
 
         // Update login timestamp
-        try {
-          await updateDoc(userDocRef, {
-            ultimoLogin: new Date().toISOString()
-          });
-        } catch (updateErr: any) {
-          console.warn("Could not update last login timestamp:", updateErr);
-          checkAndNotifyQuota(updateErr);
+        if (!isCircuitBroken()) {
+          try {
+            await updateDoc(userDocRef, {
+              ultimoLogin: new Date().toISOString()
+            });
+          } catch (updateErr: any) {
+            console.warn("Could not update last login timestamp:", updateErr);
+            checkAndNotifyQuota(updateErr);
+          }
         }
       } else {
         // First-time Google login: Create a new Firestore user profile document
@@ -470,11 +547,13 @@ export const googleSignInAndSync = async (defaultBranch: string = "OST Comércio
           dataCriacao: new Date().toISOString()
         };
 
-        try {
-          await setDoc(userDocRef, sanitizeForFirestore(profile));
-        } catch (setErr: any) {
-          console.warn("Could not save new Google user profile:", setErr);
-          checkAndNotifyQuota(setErr);
+        if (!isCircuitBroken()) {
+          try {
+            await setDoc(userDocRef, sanitizeForFirestore(profile));
+          } catch (setErr: any) {
+            console.warn("Could not save new Google user profile:", setErr);
+            checkAndNotifyQuota(setErr);
+          }
         }
       }
     } catch (getErr: any) {
@@ -496,20 +575,22 @@ export const googleSignInAndSync = async (defaultBranch: string = "OST Comércio
     }
 
     // Log success
-    try {
-      const logId = `log-glogin-${Date.now()}`;
-      await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
-        id: logId,
-        userId: user.uid,
-        userName: profile.nomeCompleto,
-        action: "Login com Google",
-        module: "AUTENTICAÇÃO",
-        details: `Login de ${profile.nomeCompleto} com Google efetuado com sucesso.`,
-        timestamp: new Date().toISOString()
-      }));
-    } catch (logErr: any) {
-      console.warn("Failed to write Google login audit log:", logErr);
-      checkAndNotifyQuota(logErr);
+    if (!isCircuitBroken()) {
+      try {
+        const logId = `log-glogin-${Date.now()}`;
+        await setDoc(doc(db, "logs", logId), sanitizeForFirestore({
+          id: logId,
+          userId: user.uid,
+          userName: profile.nomeCompleto,
+          action: "Login com Google",
+          module: "AUTENTICAÇÃO",
+          details: `Login de ${profile.nomeCompleto} com Google efetuado com sucesso.`,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (logErr: any) {
+        console.warn("Failed to write Google login audit log:", logErr);
+        checkAndNotifyQuota(logErr);
+      }
     }
 
     return { employee: mapUsuarioToEmployee(profile), branch: profile.empresa };
@@ -542,6 +623,9 @@ export const getProdutosFromFirestore = async (): Promise<any[]> => {
 // Add product to Firestore
 export const addProdutoToFirestore = async (product: any): Promise<void> => {
   const path = `produtos/${product.id}`;
+  if (isCircuitBroken()) {
+    throw new Error("RESOURCE_EXHAUSTED: Firestore write cota excedida (circuito interrompido).");
+  }
   try {
     await setDoc(doc(db, "produtos", product.id), sanitizeForFirestore(product));
   } catch (error) {
@@ -552,6 +636,9 @@ export const addProdutoToFirestore = async (product: any): Promise<void> => {
 // Update product in Firestore
 export const updateProdutoInFirestore = async (productId: string, updatedFields: any): Promise<void> => {
   const path = `produtos/${productId}`;
+  if (isCircuitBroken()) {
+    throw new Error("RESOURCE_EXHAUSTED: Firestore write cota excedida (circuito interrompido).");
+  }
   try {
     await updateDoc(doc(db, "produtos", productId), sanitizeForFirestore(updatedFields));
   } catch (error) {
@@ -562,6 +649,9 @@ export const updateProdutoInFirestore = async (productId: string, updatedFields:
 // Delete product from Firestore
 export const deleteProdutoFromFirestore = async (productId: string): Promise<void> => {
   const path = `produtos/${productId}`;
+  if (isCircuitBroken()) {
+    throw new Error("RESOURCE_EXHAUSTED: Firestore write cota excedida (circuito interrompido).");
+  }
   try {
     await deleteDoc(doc(db, "produtos", productId));
   } catch (error) {
@@ -591,6 +681,9 @@ export const getTransacoesFromFirestore = async (): Promise<any[]> => {
 // Add transaction to Firestore
 export const addTransacaoToFirestore = async (transaction: any): Promise<void> => {
   const path = `transacoes/${transaction.id}`;
+  if (isCircuitBroken()) {
+    throw new Error("RESOURCE_EXHAUSTED: Firestore write cota excedida (circuito interrompido).");
+  }
   try {
     await setDoc(doc(db, "transacoes", transaction.id), sanitizeForFirestore(transaction));
   } catch (error) {

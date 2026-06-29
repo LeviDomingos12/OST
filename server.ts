@@ -1634,6 +1634,102 @@ Retorne no formato JSON abaixo:
     }
   });
 
+  // POST: Test SMS Gateway
+  app.post("/api/sms/test-gateway", async (req, res) => {
+    try {
+      const { provider, twilioSid, twilioToken, twilioFrom, customUrl, managerPhone } = req.body;
+      
+      if (!managerPhone) {
+        return res.status(400).json({ success: false, error: "O número de telefone do gestor é obrigatório." });
+      }
+
+      const message = "OST Vendas: Este é um SMS de teste do seu gateway de Alertas SMS!";
+
+      if (provider === "TWILIO") {
+        if (!twilioSid || !twilioToken || !twilioFrom) {
+          return res.status(400).json({ success: false, error: "Credenciais do Twilio (Sid, Token, From) incompletas." });
+        }
+        
+        console.log(`[Twilio SMS Test] Sending message to ${managerPhone} using SID ${twilioSid}`);
+        const authString = Buffer.from(`${twilioSid}:${twilioToken}`).toString("base64");
+        
+        const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Basic ${authString}`,
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            From: twilioFrom,
+            To: managerPhone,
+            Body: message
+          })
+        });
+
+        const resData: any = await response.json();
+        if (response.ok) {
+          return res.json({
+            success: true,
+            message: `SMS de teste enviado com sucesso via Twilio para ${managerPhone}! ID: ${resData.sid || 'N/A'}`
+          });
+        } else {
+          return res.status(response.status).json({
+            success: false,
+            error: `Erro retornado pelo Twilio: ${resData.message || response.statusText} (Código: ${resData.code || 'N/A'})`
+          });
+        }
+
+      } else if (provider === "CUSTOM_HTTP") {
+        if (!customUrl) {
+          return res.status(400).json({ success: false, error: "URL do endpoint do gateway customizado é obrigatória." });
+        }
+
+        console.log(`[Custom SMS Test] Sending message to ${managerPhone} using URL ${customUrl}`);
+        
+        let targetUrl = customUrl;
+        targetUrl = targetUrl.replace(/{to}/g, encodeURIComponent(managerPhone));
+        targetUrl = targetUrl.replace(/{phone}/g, encodeURIComponent(managerPhone));
+        targetUrl = targetUrl.replace(/{message}/g, encodeURIComponent(message));
+        targetUrl = targetUrl.replace(/{text}/g, encodeURIComponent(message));
+
+        const response = await fetch(targetUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            to: managerPhone,
+            message: message,
+            text: message,
+            phone: managerPhone
+          })
+        });
+
+        if (response.ok) {
+          return res.json({
+            success: true,
+            message: `SMS de teste enviado com sucesso via Gateway Customizado HTTP para ${managerPhone}!`
+          });
+        } else {
+          const resText = await response.text().catch(() => "");
+          return res.status(response.status).json({
+            success: false,
+            error: `Erro de HTTP do gateway customizado (${response.status}): ${resText.slice(0, 150) || response.statusText}`
+          });
+        }
+      } else {
+        return res.status(400).json({ success: false, error: "Provedor inválido." });
+      }
+
+    } catch (err: any) {
+      console.error("[SMS TEST ERROR]", err);
+      return res.status(500).json({
+        success: false,
+        error: `Falha na conexão com o gateway SMS: ${err.message || "Erro de rede/servidor."}`
+      });
+    }
+  });
+
   // POST: Sending / Dispatching POS WhatsApp Invoices
   app.post("/api/whatsapp/dispatch-invoice", async (req, res) => {
     try {

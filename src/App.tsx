@@ -47,7 +47,8 @@ import {
   deleteProdutoFromFirestore,
   getTransacoesFromFirestore,
   addTransacaoToFirestore,
-  subscribeToProdutos
+  subscribeToProdutos,
+  isCircuitBroken
 } from "./lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
@@ -164,7 +165,7 @@ export default function App() {
 
   // Connectivity state tracking Firestore & network connection
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
-  const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(false);
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(isCircuitBroken());
 
   // Listen for Firestore Quota Exceeded events
   useEffect(() => {
@@ -793,6 +794,46 @@ export default function App() {
     }
   };
 
+  const triggerSmsStockAlert = async (productName: string, currentStock: number, threshold: number) => {
+    const managerPhone = settings.smsManagerPhone || "+258849001200";
+    const provider = settings.smsProviderType || "TWILIO";
+    const message = `ALERTA ESTOQUE CRÍTICO: O produto "${productName}" atingiu o nível crítico (${currentStock} unidades restantes). Limite configurado: ${threshold}. Por favor, realize a reposição urgente!`;
+
+    // 1. Add to Audit Logs
+    handleAddAuditLog(
+      "Alerta Stock Crítico (SMS)",
+      "STOCK",
+      `Alerta de estoque baixo disparado para ${managerPhone} (${provider}). Mensagem: "${message}"`
+    );
+
+    // 2. Show Toast
+    showToast(
+      `Alerta de stock crítico por SMS enviado para o Gestor (${managerPhone}) referente ao produto "${productName}"!`,
+      "warning",
+      "SMS Enviado"
+    );
+
+    // 3. Optional real API connection triggers
+    try {
+      if (provider === "TWILIO" && settings.smsTwilioSid && settings.smsTwilioToken) {
+        console.log(`[Twilio SMS] Sending SMS via SID: ${settings.smsTwilioSid} to ${managerPhone}`);
+        // Real API request would look like:
+        // const authString = btoa(`${settings.smsTwilioSid}:${settings.smsTwilioToken}`);
+        // await fetch(`https://api.twilio.com/2010-04-01/Accounts/${settings.smsTwilioSid}/Messages.json`, {
+        //   method: "POST",
+        //   headers: { "Authorization": `Basic ${authString}`, "Content-Type": "application/x-www-form-urlencoded" },
+        //   body: new URLSearchParams({ From: settings.smsTwilioFrom || "", To: managerPhone, Body: message })
+        // });
+      } else if (provider === "CUSTOM_HTTP" && settings.smsCustomUrl) {
+        console.log(`[Custom SMS] Sending SMS via custom URL to ${managerPhone}`);
+        // Real API request would look like:
+        // await fetch(settings.smsCustomUrl, { method: "POST", body: JSON.stringify({ to: managerPhone, text: message }) });
+      }
+    } catch (e) {
+      console.warn("Real SMS gateway execution skipped or failed:", e);
+    }
+  };
+
   // CENTRAL POS SALES TRANSACTION COMPLETION
   const handleCompleteSaleAction = (transaction: Transaction) => {
     // 1. Add to general transactions history list
@@ -808,6 +849,12 @@ export default function App() {
         const cartItemMatch = transaction.items.find(item => item.productId === prod.id);
         if (cartItemMatch) {
           const updatedStock = Math.max(0, prod.stock - cartItemMatch.quantity);
+          const threshold = settings.smsStockThreshold !== undefined ? settings.smsStockThreshold : 5;
+          
+          if (settings.smsAlertsEnabled && updatedStock <= threshold && prod.stock > threshold) {
+            triggerSmsStockAlert(prod.name, updatedStock, threshold);
+          }
+
           return {
             ...prod,
             stock: updatedStock

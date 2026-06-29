@@ -153,6 +153,22 @@ export interface SystemSettings {
   whatsappPhoneId?: string;
   managerWhatsappPhone?: string;
   alertsRecipientEmail?: string;
+  smsAlertsEnabled?: boolean;
+  smsProviderType?: "TWILIO" | "CUSTOM_HTTP";
+  smsTwilioSid?: string;
+  smsTwilioToken?: string;
+  smsTwilioFrom?: string;
+  smsCustomUrl?: string;
+  smsManagerPhone?: string;
+  smsStockThreshold?: number;
+  printerEnabled?: boolean;
+  printerName?: string;
+  printerConnectionType?: "USB" | "BLUETOOTH" | "NETWORK";
+  printerIpAddress?: string;
+  printerPort?: string;
+  printerBaudRate?: string;
+  printerType?: "RECEIPT" | "LABEL";
+  paperSize?: "A4" | "80MM" | "58MM";
 }
 
 export interface MasterclassVideo {

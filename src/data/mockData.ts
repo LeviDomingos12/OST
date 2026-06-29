@@ -119,7 +119,23 @@ export const defaultSettings: SystemSettings = {
   storeAddress: "Av. Marginal, Kiosk Nº 14, Maputo, Moçambique",
   storeContact: "+258 84 900 1200",
   defaultVat: 16,
-  theme: "laranja"
+  theme: "laranja",
+  smsAlertsEnabled: false,
+  smsProviderType: "TWILIO",
+  smsTwilioSid: "",
+  smsTwilioToken: "",
+  smsTwilioFrom: "",
+  smsCustomUrl: "http://api.sms-mozambique.co.mz/v1/send",
+  smsManagerPhone: "+258849001200",
+  smsStockThreshold: 5,
+  printerEnabled: false,
+  printerName: "POS-58",
+  printerConnectionType: "USB",
+  printerIpAddress: "192.168.1.100",
+  printerPort: "COM1",
+  printerBaudRate: "9600",
+  printerType: "RECEIPT",
+  paperSize: "80MM"
 };
 
 export interface MasterclassVideo {
