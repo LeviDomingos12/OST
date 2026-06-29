@@ -23,10 +23,11 @@ import {
   Server,
   Printer,
   Palette,
-  Trash2
+  Trash2,
+  AlertTriangle
 } from "lucide-react";
 import { SystemSettings, UserRole, Employee } from "../types";
-import { initAuth, googleSignIn, logout, getAccessToken } from "../lib/firebase";
+import { initAuth, googleSignIn, logout, getAccessToken, getLogsFromFirestore } from "../lib/firebase";
 import { sendEmail } from "../lib/gmail";
 import { SYSTEM_THEMES } from "../lib/themes";
 
@@ -329,6 +330,7 @@ export default function SettingsModule({
 
   // Simulation states
   const [isSimulatingMail, setIsSimulatingMail] = useState(false);
+  const [isTestingSmtp, setIsTestingSmtp] = useState(false);
   const [simulationLogs, setSimulationLogs] = useState<string[]>([]);
 
   // Automatic Cloud Backup Scheduler States
@@ -345,6 +347,12 @@ export default function SettingsModule({
   const [isLoadingBackups, setIsLoadingBackups] = useState(false);
   const [isRestoringBackup, setIsRestoringBackup] = useState(false);
 
+  // Firebase logs states & actions
+  const [firebaseLogs, setFirebaseLogs] = useState<any[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [logFilterDate, setLogFilterDate] = useState("");
+  const [logFilterType, setLogFilterType] = useState(""); // filter by category/module/action (e.g., "AUTENTICAÇÃO" or "MÓDULO")
+
   const fetchBackupsList = async () => {
     try {
       setIsLoadingBackups(true);
@@ -360,8 +368,21 @@ export default function SettingsModule({
     }
   };
 
+  const fetchFirebaseLogs = async () => {
+    try {
+      setIsLoadingLogs(true);
+      const logs = await getLogsFromFirestore();
+      setFirebaseLogs(logs);
+    } catch (err) {
+      console.error("Erro ao carregar logs do Firebase:", err);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  };
+
   useEffect(() => {
     fetchBackupsList();
+    fetchFirebaseLogs();
   }, []);
 
   const handleRestoreBackup = async (filename: string) => {
@@ -541,6 +562,48 @@ export default function SettingsModule({
     setGmailUser(null);
     setNeedsAuth(true);
     if (onShowToast) onShowToast("Conta Gmail desvinculada.", "info");
+  };
+  
+  const testConnection = async () => {
+    if (!smtpHost || !smtpPort) {
+      if (onShowToast) onShowToast("O Servidor Host e a Porta do SMTP são obrigatórios para realizar o teste.", "warning", "Campos em Falta");
+      return;
+    }
+
+    try {
+      setIsTestingSmtp(true);
+      const testRecipient = reportRecipientEmail || (activeUser?.email) || "test@ostvendas.com";
+      const response = await fetch("/api/email/test-smtp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          smtpHost,
+          smtpPort: Number(smtpPort),
+          smtpUser,
+          smtpPassword,
+          smtpSecure,
+          recipient: testRecipient,
+          subject: "Teste de SMTP - OST Vendas",
+          body: "Configuração de SMTP validada com sucesso via formulário de configurações."
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        if (onShowToast) onShowToast(data.message || "Conexão SMTP validada com sucesso!", "success", "Conexão Estabelecida");
+        onAddAuditLog(
+          "Teste de SMTP",
+          "CONFIGURAÇÕES",
+          `Conexão SMTP testada com sucesso para o host ${smtpHost}:${smtpPort}.`
+        );
+      } else {
+        throw new Error(data.error || "Servidor SMTP recusou a ligação.");
+      }
+    } catch (err: any) {
+      if (onShowToast) onShowToast(err.message || "Erro desconhecido ao testar conexão SMTP.", "error", "Falha de Conexão");
+    } finally {
+      setIsTestingSmtp(false);
+    }
   };
 
   const handleSaveEmailConfig = (e: React.FormEvent) => {
@@ -1519,6 +1582,143 @@ export default function SettingsModule({
             )}
           </div>
 
+          {/* NEW MODULE: Firebase Event & Diagnostics Logs */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+              <div className="flex items-center gap-2 text-slate-700">
+                <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
+                <div>
+                  <h3 className="font-bold text-slate-850 text-xs md:text-sm">Log de Diagnósticos (Firebase)</h3>
+                  <p className="text-[10px] text-slate-400 font-medium font-sans">Visualização de auditoria e erros de sistema</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={fetchFirebaseLogs}
+                disabled={isLoadingLogs}
+                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition cursor-pointer"
+                title="Atualizar Logs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingLogs ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            {/* Filters */}
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 mb-1">Filtrar por Data</label>
+                <input
+                  type="date"
+                  value={logFilterDate}
+                  onChange={(e) => setLogFilterDate(e.target.value)}
+                  className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-slate-700 bg-slate-50 focus:bg-white focus:ring-1 focus:ring-orange-500 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 mb-1">Filtrar por Tipo</label>
+                <select
+                  value={logFilterType}
+                  onChange={(e) => setLogFilterType(e.target.value)}
+                  className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-slate-700 bg-slate-50 focus:bg-white focus:ring-1 focus:ring-orange-500 text-xs"
+                >
+                  <option value="">Todos</option>
+                  <option value="AUTENTICAÇÃO">Autenticação</option>
+                  <option value="CONFIGURAÇÕES">Configurações</option>
+                  <option value="SISTEMA">Sistema</option>
+                  <option value="FALHA">Falhas / Erros</option>
+                </select>
+              </div>
+            </div>
+
+            {isLoadingLogs ? (
+              <div className="py-6 text-center text-slate-400 text-xs">
+                Carregando logs de diagnóstico...
+              </div>
+            ) : firebaseLogs.length === 0 ? (
+              <div className="py-8 text-center text-slate-400 text-xs space-y-1">
+                <Shield className="w-8 h-8 text-slate-200 mx-auto" />
+                <p>Nenhum log de diagnóstico registado.</p>
+              </div>
+            ) : (() => {
+              // Apply filters
+              const filteredLogs = firebaseLogs.filter(log => {
+                // Filter by date
+                if (logFilterDate) {
+                  if (!log.timestamp) return false;
+                  const logDateStr = log.timestamp.split("T")[0];
+                  if (logDateStr !== logFilterDate) return false;
+                }
+                // Filter by type (module or action contains type)
+                if (logFilterType) {
+                  const actionUpper = (log.action || "").toUpperCase();
+                  const moduleUpper = (log.module || "").toUpperCase();
+                  const detailsUpper = (log.details || "").toUpperCase();
+                  
+                  if (logFilterType === "FALHA") {
+                    return actionUpper.includes("FAIL") || actionUpper.includes("FALHA") || detailsUpper.includes("FALHA") || detailsUpper.includes("ERR") || detailsUpper.includes("RECUSOU");
+                  } else {
+                    return moduleUpper.includes(logFilterType) || actionUpper.includes(logFilterType);
+                  }
+                }
+                return true;
+              });
+
+              if (filteredLogs.length === 0) {
+                return (
+                  <div className="py-6 text-center text-slate-400 text-xs">
+                    Nenhum log corresponde aos filtros aplicados.
+                  </div>
+                );
+              }
+
+              return (
+                <div className="max-h-[250px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                  {filteredLogs.map((log) => {
+                    const isError = (log.action || "").toUpperCase().includes("FALHA") || 
+                                    (log.action || "").toUpperCase().includes("FAIL") ||
+                                    (log.details || "").toUpperCase().includes("ERR") ||
+                                    (log.details || "").toUpperCase().includes("RECUSOU");
+                    return (
+                      <div 
+                        key={log.id || `log-${Math.random()}`} 
+                        className={`p-2.5 rounded-xl border text-[11px] transition ${
+                          isError 
+                            ? "bg-rose-50/70 border-rose-100 text-rose-900" 
+                            : "bg-slate-50/70 border-slate-100 text-slate-700"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between font-bold mb-1">
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider ${
+                            isError ? "bg-rose-100 text-rose-800" : "bg-slate-200 text-slate-800"
+                          }`}>
+                            {log.action || "Log"}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ""}
+                          </span>
+                        </div>
+                        <p className="font-medium text-slate-800 break-words leading-relaxed">
+                          {log.details}
+                        </p>
+                        {log.userName && (
+                          <div className="mt-1.5 flex items-center gap-1 text-[9.5px] text-slate-400 font-semibold uppercase">
+                            <span>Utilizador:</span>
+                            <span className="text-slate-600">{log.userName}</span>
+                          </div>
+                        )}
+                        {log.timestamp && (
+                          <div className="text-[9px] text-slate-400 mt-0.5">
+                            {new Date(log.timestamp).toLocaleDateString()}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+
         </div>
 
       </div>
@@ -1668,17 +1868,30 @@ export default function SettingsModule({
                   />
                 </div>
 
-                <div className="pt-1 flex items-center gap-1.5">
-                  <input
-                    type="checkbox"
-                    id="smtpSecure"
-                    checked={smtpSecure}
-                    onChange={(e) => setSmtpSecure(e.target.checked)}
-                    className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-3.5 h-3.5 cursor-pointer"
-                  />
-                  <label htmlFor="smtpSecure" className="text-[10.5px] font-semibold text-slate-600 cursor-pointer select-none">
-                    Utilizar Conexão Segura (SSL/TLS)
-                  </label>
+                <div className="pt-1 flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      id="smtpSecure"
+                      checked={smtpSecure}
+                      onChange={(e) => setSmtpSecure(e.target.checked)}
+                      className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-3.5 h-3.5 cursor-pointer"
+                    />
+                    <label htmlFor="smtpSecure" className="text-[10.5px] font-semibold text-slate-600 cursor-pointer select-none">
+                      Utilizar SSL/TLS
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isTestingSmtp}
+                    onClick={testConnection}
+                    className="py-1 px-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg text-[10px] transition cursor-pointer disabled:opacity-50 flex items-center gap-1 shrink-0"
+                    title="Testar Conexão SMTP com envio de e-mail de teste"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isTestingSmtp ? "animate-spin" : ""}`} />
+                    {isTestingSmtp ? "Testando..." : "Testar Conexão"}
+                  </button>
                 </div>
               </div>
             )}

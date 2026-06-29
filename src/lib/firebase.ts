@@ -853,3 +853,29 @@ export const addAuditLogToCloudSQL = async (log: any): Promise<boolean> => {
   }
 };
 
+/**
+ * Fetches security, login, and error logs from Firestore "logs" collection.
+ */
+export const getLogsFromFirestore = async (): Promise<any[]> => {
+  const path = "logs";
+  try {
+    const querySnapshot = await getDocs(collection(db, path));
+    const list: any[] = [];
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      list.push({ ...data, id: docSnap.id });
+    });
+    // Sort by timestamp descending
+    list.sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeB - timeA;
+    });
+    return list;
+  } catch (error) {
+    console.error("Failed to fetch logs from Firestore:", error);
+    return [];
+  }
+};
+
+
