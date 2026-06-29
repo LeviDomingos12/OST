@@ -106,6 +106,7 @@ export const defaultSettings: SystemSettings = {
   smsGateway: "http://api.sms-mozambique.co.mz/v1/send",
   smtpServer: "smtp.gmail.com",
   reportRecipientEmail: "levidomingos12@gmail.com",
+  alertsRecipientEmail: "levidomingos12@gmail.com",
   reportHour: "02:00",
   reportFrequency: "daily",
   smtpEnabled: false,

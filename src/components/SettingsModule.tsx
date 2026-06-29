@@ -74,6 +74,7 @@ export default function SettingsModule({
   const [reportRecipientEmail, setReportRecipientEmail] = useState(settings.reportRecipientEmail || "");
   const [reportHour, setReportHour] = useState(settings.reportHour || "02:00");
   const [reportFrequency, setReportFrequency] = useState(settings.reportFrequency || "daily");
+  const [alertsRecipientEmail, setAlertsRecipientEmail] = useState(settings.alertsRecipientEmail || "");
   
   // Custom SMTP Configurations
   const [smtpEnabled, setSmtpEnabled] = useState(settings.smtpEnabled || false);
@@ -512,6 +513,7 @@ export default function SettingsModule({
     setReportRecipientEmail(settings.reportRecipientEmail || "");
     setReportHour(settings.reportHour || "02:00");
     setReportFrequency(settings.reportFrequency || "daily");
+    setAlertsRecipientEmail(settings.alertsRecipientEmail || "");
     
     setSmtpEnabled(settings.smtpEnabled || false);
     setSmtpHost(settings.smtpHost || "smtp.gmail.com");
@@ -756,6 +758,33 @@ export default function SettingsModule({
     );
     if (onShowToast) {
       onShowToast("Os dados cadastrais e fiscais do estabelecimento foram salvos!", "success", "Dados Gravados");
+    }
+
+    setTimeout(() => setFeedbackMsg(""), 2200);
+  };
+
+  const handleSaveAlertsConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (alertsRecipientEmail && !alertsRecipientEmail.includes("@")) {
+      if (onShowToast) {
+        onShowToast("Por favor, introduza um e-mail de destino válido.", "warning", "E-mail Inválido");
+      }
+      return;
+    }
+
+    onUpdateSettings({
+      alertsRecipientEmail
+    });
+
+    setFeedbackMsg("Configurações de Notificações salvas com sucesso!");
+    onAddAuditLog(
+      "Alterações de Configurações do Sistema",
+      "CONFIGURAÇÕES",
+      `E-mail de destino para alertas automáticos atualizado para: ${alertsRecipientEmail || "Nenhum"}.`
+    );
+    if (onShowToast) {
+      onShowToast("O e-mail de alertas para eventos críticos foi atualizado!", "success", "Notificações Gravadas");
     }
 
     setTimeout(() => setFeedbackMsg(""), 2200);
@@ -1028,100 +1057,144 @@ export default function SettingsModule({
       {/* Grid: Left Company profiles, Right Gateway integrations & backups */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 text-xs md:text-xs text-slate-800">
         
-        {/* LEFT COLUMN: Profile and Tax variables */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 text-orange-600">
-            <Building className="w-4.5 h-4.5" />
-            <h3 className="font-bold text-slate-850 text-sm">Identidade Corporativa & Variáveis Fiscais</h3>
-          </div>
-          
-          <form onSubmit={handleSaveCompanyConfig} className="space-y-4">
+        {/* LEFT COLUMN: Profile, Tax variables and System Notifications */}
+        <div className="space-y-5">
+          {/* Company Profile Card */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center gap-2 text-orange-600">
+              <Building className="w-4.5 h-4.5" />
+              <h3 className="font-bold text-slate-850 text-sm">Identidade Corporativa & Variáveis Fiscais</h3>
+            </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            <form onSubmit={handleSaveCompanyConfig} className="space-y-4">
               
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Nome Fantasia do Estabelecimento</label>
+                  <input
+                    type="text"
+                    required
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold outline-none text-slate-850"
+                    placeholder="OST Vendas"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Slogan do Sistema</label>
+                  <input
+                    type="text"
+                    required
+                    value={slogan}
+                    onChange={(e) => setSlogan(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-semibold outline-none"
+                    placeholder="Controle Total do Seu Negócio"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Empresa NUIT (Contribuinte de Moçambique)</label>
+                  <input
+                    type="text"
+                    required
+                    value={companyNuit}
+                    onChange={(e) => setCompanyNuit(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-bold outline-none"
+                    placeholder="142833902"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Taxa Padrão de IVA (%)</label>
+                  <select
+                    value={defaultVat}
+                    onChange={(e) => setDefaultVat(Number(e.target.value))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-bold outline-none"
+                  >
+                    <option value={16}>16% (IVA Geral Moçambique)</option>
+                    <option value={0}>Isento (0%)</option>
+                    <option value={5}>5% (Taxa Especial Reduzida)</option>
+                  </select>
+                </div>
+
+              </div>
+
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Nome Fantasia do Estabelecimento</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Endereço de Facturação</label>
                 <input
                   type="text"
                   required
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold outline-none text-slate-850"
-                  placeholder="OST Vendas"
+                  value={storeAddress}
+                  onChange={(e) => setStoreAddress(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-semibold outline-none text-slate-850"
+                  placeholder="Av. do Trabalho, Armazém 4, Maputo"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Slogan do Sistema</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Contacto Oficial</label>
                 <input
                   type="text"
                   required
-                  value={slogan}
-                  onChange={(e) => setSlogan(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-semibold outline-none"
-                  placeholder="Controle Total do Seu Negócio"
+                  value={storeContact}
+                  onChange={(e) => setStoreContact(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-semibold outline-none text-slate-850"
+                  placeholder="+258 84 900 1200"
                 />
               </div>
 
+              <button
+                type="submit"
+                className="w-full py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs cursor-pointer shadow-lg shadow-orange-500/15"
+              >
+                Salvar Definições Fiscais
+              </button>
+
+            </form>
+          </div>
+
+          {/* System Notifications Card */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center gap-2 text-orange-600">
+              <AlertTriangle className="w-4.5 h-4.5" />
+              <h3 className="font-bold text-slate-850 text-sm">Notificações do Sistema</h3>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-normal">
+              Configure as definições de e-mail de destino para alertas e relatórios automáticos de auditoria. O administrador receberá logs de eventos operacionais críticos externamente para garantir monitoria contínua do ERP.
+            </p>
+
+            <form onSubmit={handleSaveAlertsConfig} className="space-y-4">
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Empresa NUIT (Contribuinte de Moçambique)</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block">E-mail de Destino para Alertas de Eventos Críticos</label>
                 <input
-                  type="text"
-                  required
-                  value={companyNuit}
-                  onChange={(e) => setCompanyNuit(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-bold outline-none"
-                  placeholder="142833902"
+                  type="email"
+                  disabled={!canEdit}
+                  value={alertsRecipientEmail}
+                  onChange={(e) => setAlertsRecipientEmail(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-semibold outline-none text-slate-850 disabled:opacity-75 text-xs"
+                  placeholder="admin-alerts@empresa.co.mz"
                 />
+                <span className="text-[10px] text-slate-400 block mt-1">
+                  Este endereço receberá notificações automáticas em caso de eventos de segurança, falhas de sistema e acessos não autorizados.
+                </span>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Taxa Padrão de IVA (%)</label>
-                <select
-                  value={defaultVat}
-                  onChange={(e) => setDefaultVat(Number(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-bold outline-none"
+              {canEdit ? (
+                <button
+                  type="submit"
+                  className="w-full py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs cursor-pointer shadow-lg shadow-orange-500/15"
                 >
-                  <option value={16}>16% (IVA Geral Moçambique)</option>
-                  <option value={0}>Isento (0%)</option>
-                  <option value={5}>5% (Taxa Especial Reduzida)</option>
-                </select>
-              </div>
-
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Endereço de Facturação</label>
-              <input
-                type="text"
-                required
-                value={storeAddress}
-                onChange={(e) => setStoreAddress(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-semibold outline-none text-slate-850"
-                placeholder="Av. do Trabalho, Armazém 4, Maputo"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Contacto Oficial</label>
-              <input
-                type="text"
-                required
-                value={storeContact}
-                onChange={(e) => setStoreContact(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-semibold outline-none text-slate-850"
-                placeholder="+258 84 900 1200"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs cursor-pointer shadow-lg shadow-orange-500/15"
-            >
-              Salvar Definições Fiscais
-            </button>
-
-          </form>
+                  Salvar Definições de Notificações
+                </button>
+              ) : (
+                <div className="text-[11px] text-slate-400 text-center py-2 bg-slate-50 border border-slate-100 rounded-xl">
+                  Apenas administradores podem alterar as definições de alertas críticos.
+                </div>
+              )}
+            </form>
+          </div>
         </div>
 
         {/* RIGHT COLUMN: Mobile Money Gateways & backup panels */}

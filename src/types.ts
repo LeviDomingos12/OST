@@ -152,6 +152,7 @@ export interface SystemSettings {
   whatsappToken?: string;
   whatsappPhoneId?: string;
   managerWhatsappPhone?: string;
+  alertsRecipientEmail?: string;
 }
 
 export interface MasterclassVideo {
