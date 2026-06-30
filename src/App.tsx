@@ -834,6 +834,69 @@ export default function App() {
     }
   };
 
+  const triggerEmailStockAlert = async (productName: string, currentStock: number, threshold: number) => {
+    const recipientEmail = settings.alertsRecipientEmail || "admin-alerts@empresa.co.mz";
+    const subject = `ALERTA DE ESTOQUE CRÍTICO - ${productName}`;
+    const body = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; border: 1px solid #fee2e2; border-radius: 16px; background-color: #fff5f5;">
+        <h2 style="color: #dc2626; margin-top: 0;">⚠️ Alerta de Estoque Crítico</h2>
+        <p>O sistema <strong>OST Vendas</strong> detectou que um de seus produtos atingiu o nível de estoque mínimo configurado.</p>
+        <hr style="border: none; border-top: 1px solid #fee2e2; margin: 20px 0;" />
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 0; color: #4b5563; font-weight: bold;">Produto:</td>
+            <td style="padding: 8px 0; color: #1f2937; font-weight: bold;">${productName}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #4b5563;">Estoque Atual:</td>
+            <td style="padding: 8px 0; color: #dc2626; font-weight: bold;">${currentStock} unidades</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #4b5563;">Limite Mínimo:</td>
+            <td style="padding: 8px 0; color: #1f2937;">${threshold} unidades</td>
+          </tr>
+        </table>
+        <hr style="border: none; border-top: 1px solid #fee2e2; margin: 20px 0;" />
+        <p style="font-size: 13px; color: #4b5563;">Por favor, providencie o reabastecimento deste produto o quanto antes para evitar rupturas de estoque no POS.</p>
+        <p style="font-size: 11px; color: #9ca3af; margin-top: 25px; text-align: center;">Este é um e-mail automático enviado pelo sistema OST Vendas.</p>
+      </div>
+    `;
+
+    // 1. Add to Audit Logs
+    handleAddAuditLog(
+      "Alerta Stock Crítico (E-mail)",
+      "STOCK",
+      `Alerta de estoque baixo para "${productName}" enviado para o e-mail: ${recipientEmail}`
+    );
+
+    // 2. Show Toast
+    showToast(
+      `Alerta de estoque crítico enviado para o e-mail: ${recipientEmail}!`,
+      "warning",
+      "E-mail de Alerta"
+    );
+
+    // 3. Dispatch to backend endpoint
+    try {
+      const response = await fetch("/api/email/send-alert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient: recipientEmail,
+          subject,
+          body
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Erro no envio do e-mail de alerta");
+      }
+      console.log("[EMAIL ALERT] Alerta de estoque enviado com sucesso:", data);
+    } catch (err: any) {
+      console.error("[EMAIL ALERT ERROR] Falha ao enviar e-mail de alerta de estoque:", err);
+    }
+  };
+
   // CENTRAL POS SALES TRANSACTION COMPLETION
   const handleCompleteSaleAction = (transaction: Transaction) => {
     // 1. Add to general transactions history list
@@ -853,6 +916,10 @@ export default function App() {
           
           if (settings.smsAlertsEnabled && updatedStock <= threshold && prod.stock > threshold) {
             triggerSmsStockAlert(prod.name, updatedStock, threshold);
+          }
+
+          if (settings.emailStockAlertsEnabled && updatedStock <= threshold && prod.stock > threshold) {
+            triggerEmailStockAlert(prod.name, updatedStock, threshold);
           }
 
           return {

@@ -110,6 +110,7 @@ export default function SettingsModule({
   const [smtpUser, setSmtpUser] = useState(settings.smtpUser || "");
   const [smtpPassword, setSmtpPassword] = useState(settings.smtpPassword || "");
   const [smtpSecure, setSmtpSecure] = useState(settings.smtpSecure || false);
+  const [emailStockAlertsEnabled, setEmailStockAlertsEnabled] = useState(settings.emailStockAlertsEnabled || false);
   
   // Custom states for dispatcher details
   const [reportFormat, setReportFormat] = useState<"PDF" | "CSV" | "AMBOS">("PDF");
@@ -367,8 +368,67 @@ export default function SettingsModule({
   const [backupCron, setBackupCron] = useState(settings.backupCron || "0 2 * * *");
   const [backupTime, setBackupTime] = useState(settings.backupTime || "02:00");
   const [cloudProvider, setCloudProvider] = useState(settings.cloudProvider || "gcs");
+  const [backupExportToCloud, setBackupExportToCloud] = useState(settings.backupExportToCloud ?? true);
+  const [backupExportToEmail, setBackupExportToEmail] = useState(settings.backupExportToEmail ?? true);
   const [isSimulatingCloudBackup, setIsSimulatingCloudBackup] = useState(false);
   const [cloudBackupLogs, setCloudBackupLogs] = useState<string[]>([]);
+
+  // Cron Backups status states from backend
+  const [cronStatus, setCronStatus] = useState<{
+    active: boolean;
+    cronPattern: string;
+    description: string;
+    lastRun: string | null;
+    status: string | null;
+  } | null>(null);
+
+  const fetchCronStatus = async () => {
+    try {
+      const res = await fetch("/api/backups/cron-status");
+      const data = await res.json();
+      if (data.success) {
+        setCronStatus({
+          active: data.active,
+          cronPattern: data.cronPattern,
+          description: data.description,
+          lastRun: data.lastRun,
+          status: data.status
+        });
+      }
+    } catch (e) {
+      console.error("Erro ao carregar status do cron de backup:", e);
+    }
+  };
+
+  const handleTriggerCronBackup = async () => {
+    setIsSimulatingCloudBackup(true);
+    setCloudBackupLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 🚀 Disparando execução manual do backup agendado (Fim do Dia de Trabalho)...`]);
+    try {
+      const res = await fetch("/api/backups/trigger-cron", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setCloudBackupLogs(prev => [
+          ...prev, 
+          `[${new Date().toLocaleTimeString()}] 📦 Cópia gerada com sucesso!`,
+          `[${new Date().toLocaleTimeString()}] 📧 Resultado: ${data.status || "Backup concluído com sucesso."}`
+        ]);
+        if (onShowToast) {
+          onShowToast("Backup agendado de fim de dia executado e enviado por e-mail com sucesso!", "success", "Cron Concluído");
+        }
+        await fetchCronStatus();
+        await fetchBackupsList();
+      } else {
+        throw new Error(data.error || "Falha na execução");
+      }
+    } catch (e: any) {
+      setCloudBackupLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Erro: ${e.message}`]);
+      if (onShowToast) {
+        onShowToast(`Falha ao disparar cron: ${e.message}`, "error");
+      }
+    } finally {
+      setIsSimulatingCloudBackup(false);
+    }
+  };
 
   // Real backups state & actions
   const [backupsList, setBackupsList] = useState<any[]>([]);
@@ -411,6 +471,7 @@ export default function SettingsModule({
   useEffect(() => {
     fetchBackupsList();
     fetchFirebaseLogs();
+    fetchCronStatus();
   }, []);
 
   const handleRestoreBackup = async (filename: string) => {
@@ -739,12 +800,15 @@ export default function SettingsModule({
     setSmtpUser(settings.smtpUser || "");
     setSmtpPassword(settings.smtpPassword || "");
     setSmtpSecure(settings.smtpSecure || false);
+    setEmailStockAlertsEnabled(settings.emailStockAlertsEnabled || false);
     
     if (settings.cloudBackupEnabled !== undefined) setCloudBackupEnabled(settings.cloudBackupEnabled);
     if (settings.backupFrequency) setBackupFrequency(settings.backupFrequency);
     if (settings.backupCron) setBackupCron(settings.backupCron);
     if (settings.backupTime) setBackupTime(settings.backupTime);
     if (settings.cloudProvider) setCloudProvider(settings.cloudProvider);
+    if (settings.backupExportToCloud !== undefined) setBackupExportToCloud(settings.backupExportToCloud);
+    if (settings.backupExportToEmail !== undefined) setBackupExportToEmail(settings.backupExportToEmail);
 
     setPrinterEnabled(settings.printerEnabled || false);
     setPrinterName(settings.printerName || "POS-58");
@@ -1156,14 +1220,15 @@ export default function SettingsModule({
     }
 
     onUpdateSettings({
-      alertsRecipientEmail
+      alertsRecipientEmail,
+      emailStockAlertsEnabled
     });
 
     setFeedbackMsg("Configurações de Notificações salvas com sucesso!");
     onAddAuditLog(
       "Alterações de Configurações do Sistema",
       "CONFIGURAÇÕES",
-      `E-mail de destino para alertas automáticos atualizado para: ${alertsRecipientEmail || "Nenhum"}.`
+      `E-mail de destino para alertas automáticos atualizado para: ${alertsRecipientEmail || "Nenhum"}. Alertas de estoque por email: ${emailStockAlertsEnabled ? "Ativos" : "Inativos"}.`
     );
     if (onShowToast) {
       onShowToast("O e-mail de alertas para eventos críticos foi atualizado!", "success", "Notificações Gravadas");
@@ -1301,7 +1366,9 @@ export default function SettingsModule({
       backupFrequency,
       backupCron,
       backupTime,
-      cloudProvider
+      cloudProvider,
+      backupExportToCloud,
+      backupExportToEmail
     });
 
     setFeedbackMsg("Configuração de Backup Automático em Nuvem atualizada com sucesso!");
@@ -1816,6 +1883,22 @@ export default function SettingsModule({
                 </span>
               </div>
 
+              <div className="p-3 bg-slate-50 border border-slate-150 rounded-xl space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700 select-none">
+                  <input
+                    type="checkbox"
+                    disabled={!canEdit}
+                    checked={emailStockAlertsEnabled}
+                    onChange={(e) => setEmailStockAlertsEnabled(e.target.checked)}
+                    className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span>Alertas de Estoque Baixo por E-mail</span>
+                </label>
+                <p className="text-[10.5px] text-slate-400 leading-normal">
+                  Quando ativo, envia avisos automáticos via e-mail para o destinatário acima sempre que o estoque de algum item atingir um nível crítico. Requer SMTP ou Gmail API configurado.
+                </p>
+              </div>
+
               {canEdit ? (
                 <button
                   type="submit"
@@ -2186,11 +2269,11 @@ export default function SettingsModule({
               <div className="flex items-center gap-2 text-orange-600">
                 <Cloud className="w-5 h-5 shrink-0" />
                 <div>
-                  <h3 className="font-bold text-slate-850 text-xs md:text-sm">Backup Automático na Nuvem</h3>
-                  <p className="text-[10px] text-slate-400 font-medium">Sincronize ficheiros de segurança na nuvem via cron</p>
+                  <h3 className="font-bold text-slate-850 text-xs md:text-sm">Agendamento de Backup</h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Agende a exportação automática de todos os dados do sistema</p>
                 </div>
               </div>
-
+ 
               {/* Status Indicator */}
               <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold ${
                 cloudBackupEnabled 
@@ -2201,7 +2284,7 @@ export default function SettingsModule({
                 {cloudBackupEnabled ? "Agendado" : "Inativo"}
               </span>
             </div>
-
+ 
             <form onSubmit={handleSaveCloudBackupConfig} className="space-y-4">
               {/* Toggle to enable/disable */}
               <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-150">
@@ -2220,18 +2303,45 @@ export default function SettingsModule({
                   className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-4 h-4 cursor-pointer"
                 />
               </div>
-
+ 
               {cloudBackupEnabled && (
                 <div className="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs animate-in slide-in-from-top-2 duration-150">
+                  {/* Backup Destination Channels */}
+                  <div className="bg-white p-2.5 rounded-xl border border-slate-150 space-y-2">
+                    <span className="text-[9.5px] font-extrabold text-slate-400 uppercase block leading-none">Método de Exportação / Canais de Envio</span>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700 select-none">
+                        <input
+                          type="checkbox"
+                          disabled={!canEdit}
+                          checked={backupExportToCloud}
+                          onChange={(e) => setBackupExportToCloud(e.target.checked)}
+                          className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-4 h-4 cursor-pointer"
+                        />
+                        <span>Nuvem de Destino</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700 select-none">
+                        <input
+                          type="checkbox"
+                          disabled={!canEdit}
+                          checked={backupExportToEmail}
+                          onChange={(e) => setBackupExportToEmail(e.target.checked)}
+                          className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-4 h-4 cursor-pointer"
+                        />
+                        <span>Enviar por E-mail</span>
+                      </label>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     {/* Destination Cloud Service Selector */}
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Serviço de Destino</label>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Serviço de Destino (Cloud)</label>
                       <select
-                        disabled={!canEdit}
+                        disabled={!canEdit || !backupExportToCloud}
                         value={cloudProvider}
                         onChange={(e) => setCloudProvider(e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none text-xs text-slate-750"
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none text-xs text-slate-750 disabled:opacity-50"
                       >
                         <option value="gcs">Google Cloud (GCS)</option>
                         <option value="s3">Amazon Web Services (S3)</option>
@@ -2240,7 +2350,7 @@ export default function SettingsModule({
                         <option value="dropbox">Dropbox Business Cloud</option>
                       </select>
                     </div>
-
+ 
                     {/* Frequency Selector */}
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase">Frequência</label>
@@ -2299,6 +2409,55 @@ export default function SettingsModule({
                   )}
                 </div>
               )}
+
+              {/* Backend Cron Real-Time status panel */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-orange-500" />
+                    Status do Agendador (Cron do Servidor)
+                  </span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide ${cronStatus?.active ? "bg-emerald-100 text-emerald-805" : "bg-orange-100 text-orange-805"}`}>
+                    {cronStatus?.active ? "Ativo no Servidor" : "Inativo"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[11px] font-medium text-slate-600">
+                  <div className="bg-white p-2 rounded-lg border border-slate-100 space-y-0.5">
+                    <span className="text-[9px] text-slate-400 font-bold uppercase block leading-none">Expressão Cron</span>
+                    <span className="font-mono font-bold text-slate-800 text-xs">{cronStatus?.cronPattern || "0 18 * * 1-5"}</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-slate-100 space-y-0.5">
+                    <span className="text-[9px] text-slate-400 font-bold uppercase block leading-none">Frequência Ativa</span>
+                    <span className="font-bold text-slate-800 text-[10px] truncate block" title={cronStatus?.description || "Fim de Dia (Seg-Sex às 18:00)"}>
+                      {cronStatus?.description || "Fim de Dia (Seg-Sex às 18:00)"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-lg border border-slate-100 space-y-1">
+                  <div className="flex items-center justify-between text-[9px] text-slate-400 font-bold uppercase leading-none">
+                    <span>Último Disparo Automático</span>
+                    <span>Status de Envio</span>
+                  </div>
+                  <div className="flex items-center justify-between font-bold text-[10.5px]">
+                    <span className="text-slate-750">{cronStatus?.lastRun ? new Date(cronStatus.lastRun).toLocaleString("pt-PT") : "Pendente (Sem disparos)"}</span>
+                    <span className="text-slate-600 max-w-[150px] truncate font-semibold" title={cronStatus?.status || "Nenhum status"}>
+                      {cronStatus?.status || "Pendente"}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleTriggerCronBackup}
+                  disabled={isSimulatingCloudBackup || !cloudBackupEnabled}
+                  className="w-full py-1.5 bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-700 font-bold rounded-lg text-[10.5px] flex items-center justify-center gap-1 transition disabled:opacity-50"
+                >
+                  <Mail className="w-3 h-3" />
+                  Testar Envio & Backup de Fim de Dia (Simular Cron Agora)
+                </button>
+              </div>
 
               {/* Operations control buttons */}
               <div className="flex gap-2 text-xs">

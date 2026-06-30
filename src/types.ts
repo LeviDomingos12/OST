@@ -127,6 +127,7 @@ export interface SystemSettings {
   smtpUser?: string;
   smtpPassword?: string;
   smtpSecure?: boolean;
+  emailStockAlertsEnabled?: boolean;
   slogan?: string;
   storeAddress?: string;
   storeContact?: string;
@@ -136,6 +137,8 @@ export interface SystemSettings {
   backupCron?: string;
   backupTime?: string;
   cloudProvider?: string;
+  backupExportToCloud?: boolean;
+  backupExportToEmail?: boolean;
   mpesaEnabled?: boolean;
   mpesaShortcode?: string;
   mpesaApiKey?: string;

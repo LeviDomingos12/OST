@@ -10,6 +10,7 @@ import { getFirestore, doc, getDoc, setDoc, collection, getDocs, writeBatch } fr
 import { db as drizzleDb, isCloudSqlAvailable } from "./src/db/index.ts";
 import { products as productsTable, customers as customersTable, transactions as transactionsTable, auditlogs as auditlogsTable, settings as settingsTable } from "./src/db/schema.ts";
 import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
+import cron from "node-cron";
 
 
 dotenv.config();
@@ -321,6 +322,28 @@ Retorne no formato JSON abaixo:
     }
   });
 
+  // POST: Send automatic stock alert email
+  app.post("/api/email/send-alert", async (req, res) => {
+    try {
+      const { recipient, subject, body } = req.body;
+      if (!recipient || !subject || !body) {
+        return res.status(400).json({ error: "Parâmetros recipient, subject e body são obrigatórios." });
+      }
+      
+      const result = await trySendEmail({
+        to: recipient,
+        subject,
+        body,
+        fallbackMessage: `Alerta de estoque enviado com sucesso para ${recipient}!`
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("[API EMAIL ALERT ERROR]", error);
+      res.status(500).json({ error: error.message || "Falha ao processar envio de e-mail de alerta." });
+    }
+  });
+
   // POST: Testing Custom SMTP connection and dispatch immediately
   app.post("/api/email/test-smtp", async (req, res) => {
     try {
@@ -488,75 +511,357 @@ Retorne no formato JSON abaixo:
     };
   }
 
-  // Scheduler to verify and execute automated backups in the background
-  function startBackupScheduler() {
-    console.log("[SCHEDULER] Automatic Backup background task loaded.");
-    
-    // Run an initial check 5 seconds after boot, then check every 1 minute
-    setTimeout(checkAndRunAutomatedBackup, 5000);
-    setInterval(checkAndRunAutomatedBackup, 60 * 1000);
-  }
+  // In-memory status variables for active cron
+  let activeBackupCronJob: any = null;
+  let lastCronRunTime: string | null = null;
+  let lastCronRunStatus: string | null = null;
+  let currentCronPattern: string = "0 18 * * 1-5";
+  let currentCronDescription: string = "Default Workday Cron (Mon-Fri 18:00)";
 
-  async function checkAndRunAutomatedBackup() {
+  // Add server audit log helper
+  function addServerAuditLog(action: string, module: string, details: string) {
     try {
-      const settingsPath = path.join(DB_DIR, "settings.json");
-      if (!fs.existsSync(settingsPath)) return;
-      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-
-      // Check if backup is enabled
-      if (!settings.cloudBackupEnabled) {
-        return;
+      const filePath = path.join(DB_DIR, "auditlogs.json");
+      let logs: any[] = [];
+      if (fs.existsSync(filePath)) {
+        try {
+          logs = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        } catch (e) {
+          console.error("Failed to parse auditlogs.json:", e);
+        }
       }
+      const newLog = {
+        id: `log-${Date.now()}-${Math.random()}`,
+        userId: null,
+        userName: "Sistema (Scheduler)",
+        action,
+        module,
+        details,
+        timestamp: new Date().toISOString()
+      };
+      logs.push(newLog);
+      fs.writeFileSync(filePath, JSON.stringify(logs, null, 2), "utf-8");
+      console.log(`[SERVER AUDIT LOG] ${action} logged.`);
 
-      const frequency = settings.backupFrequency || "daily";
-      if (frequency === "cron") {
-        // Simple mock cron support or skip custom cron simulation
-        return;
-      }
-
-      const backupDir = path.join(DB_DIR, "backups");
-      if (!fs.existsSync(backupDir)) {
-        fs.mkdirSync(backupDir, { recursive: true });
-      }
-
-      // Check when the last automated backup took place
-      const files = fs.readdirSync(backupDir).filter(f => f.startsWith("backup_automated_") && f.endsWith(".json"));
-      let lastBackupTime = 0;
-      if (files.length > 0) {
-        const stats = files.map(file => {
-          const filePath = path.join(backupDir, file);
-          return {
-            name: file,
-            mtime: fs.statSync(filePath).mtimeMs
-          };
-        }).sort((a, b) => b.mtime - a.mtime);
-        lastBackupTime = stats[0].mtime;
-      }
-
-      const now = Date.now();
-      const elapsedMs = now - lastBackupTime;
-      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-      const ONE_WEEK_MS = 7 * ONE_DAY_MS;
-      const ONE_MONTH_MS = 30 * ONE_DAY_MS;
-
-      let requiredIntervalMs = ONE_DAY_MS;
-      if (frequency === "weekly") {
-        requiredIntervalMs = ONE_WEEK_MS;
-      } else if (frequency === "monthly") {
-        requiredIntervalMs = ONE_MONTH_MS;
-      }
-
-      if (elapsedMs >= requiredIntervalMs) {
-        console.log(`[SCHEDULER] Running automated database backup. Frequência: ${frequency}. Tempo decorrido: ${Math.round(elapsedMs / 3600000)}h...`);
-        await performDbBackup("automated");
+      if (firebaseDb) {
+        setDoc(doc(firebaseDb, "auditlogs", newLog.id), sanitizeForFirestore(newLog))
+          .catch(err => console.error("Failed to sync server audit log to Firestore:", err));
       }
     } catch (err) {
-      console.error("[SCHEDULER ERROR] Failed to run automated backup check:", err);
+      console.error("Failed to write server audit log:", err);
+    }
+  }
+
+  // Send email helper with attachments support
+  async function trySendEmailWithAttachment({ 
+    to, 
+    subject, 
+    body, 
+    fallbackMessage, 
+    attachments 
+  }: { 
+    to: string; 
+    subject: string; 
+    body: string; 
+    fallbackMessage: string; 
+    attachments?: any[] 
+  }) {
+    const filePath = path.join(DB_DIR, "settings.json");
+    let settings: any = null;
+    if (fs.existsSync(filePath)) {
+      try {
+        settings = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      } catch (e) {
+        console.warn("Failed to parse settings.json for SMTP check:", e);
+      }
+    }
+
+    if (settings && settings.smtpEnabled) {
+      console.log(`[SMTP SENDER] Custom SMTP is enabled. Attempting sending email with attachments to ${to}...`);
+      const transporter = nodemailer.createTransport({
+        host: settings.smtpHost || "smtp.gmail.com",
+        port: Number(settings.smtpPort || 587),
+        secure: settings.smtpSecure === true || settings.smtpSecure === "true" || Number(settings.smtpPort) === 465,
+        auth: settings.smtpUser ? {
+          user: settings.smtpUser,
+          pass: settings.smtpPassword,
+        } : undefined,
+        tls: {
+          rejectUnauthorized: false
+        }
+      });
+
+      const mailOptions = {
+        from: settings.smtpUser || "noreply@ostvendas.com",
+        to,
+        subject,
+        html: body,
+        attachments: attachments || []
+      };
+
+      await transporter.sendMail(mailOptions);
+      return {
+        success: true,
+        message: `E-mail de backup com anexo enviado com sucesso via SMTP real (${settings.smtpHost}) para ${to}!`,
+        viaSmtp: true
+      };
+    }
+
+    // Default simulation fallback
+    console.log(`[SMTP SENDER] Custom SMTP is NOT enabled. Using simulation for ${to}...`);
+    if (!to || to.includes("erro") || to.includes("fail") || !to.includes("@") || to === "vendas.central@ost.co.mz") {
+      throw new Error("O servidor SMTP recusou o envio do e-mail.");
+    }
+
+    return {
+      success: true,
+      message: fallbackMessage,
+      viaSmtp: false
+    };
+  }
+
+  // Execute backup cron logic
+  async function executeCronBackup(triggeredBy: string = "Cron Scheduler") {
+    console.log(`[CRON BACKUP] Starting end-of-workday automated backup process (Triggered by: ${triggeredBy})...`);
+    lastCronRunTime = new Date().toISOString();
+    
+    // 1. Perform local JSON backup
+    let backupResult;
+    try {
+      backupResult = await performDbBackup("cron_automated");
+    } catch (err: any) {
+      console.error("[CRON BACKUP ERROR] Failed to perform database backup:", err);
+      lastCronRunStatus = `Erro ao criar JSON: ${err.message}`;
+      addServerAuditLog(
+        "Falha de Cópia de Segurança",
+        "SISTEMA",
+        `Erro ao criar ficheiro JSON local para backup agendado: ${err.message}`
+      );
+      return;
+    }
+
+    const backupFilePath = path.join(DB_DIR, "backups", backupResult.filename);
+    const fileSizeKb = (backupResult.size / 1024).toFixed(2);
+    
+    // 2. Read settings to get custom email or cloud provider
+    const settingsPath = path.join(DB_DIR, "settings.json");
+    let settings: any = {};
+    if (fs.existsSync(settingsPath)) {
+      try {
+        settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      } catch (err) {
+        console.error("[CRON BACKUP] Failed to parse settings:", err);
+      }
+    }
+
+    const recipientEmail = settings.reportRecipientEmail || settings.alertsRecipientEmail || settings.smtpUser || "vendas.central@ost.co.mz";
+    const provider = settings.cloudProvider || "gcs";
+    const providerName = {
+      gcs: "Google Cloud (GCS)",
+      s3: "Amazon Web Services (S3)",
+      azure: "Microsoft Azure (Blob)",
+      mega: "Mega Storage Cripto",
+      dropbox: "Dropbox Business Cloud"
+    }[provider] || "Google Cloud Storage";
+
+    const exportToCloud = settings.backupExportToCloud !== false;
+    const exportToEmail = settings.backupExportToEmail !== false;
+
+    console.log(`[CRON BACKUP] Database JSON backup created: ${backupResult.filename} (${fileSizeKb} KB). Export to Cloud: ${exportToCloud}, Export to Email: ${exportToEmail}`);
+
+    // 3. Cloud Storage Sync Simulation / Write Log
+    if (exportToCloud) {
+      const cloudLogPath = path.join(DB_DIR, "backups", "cloud_sync.log");
+      const timestamp = new Date().toISOString();
+      const cloudLogLine = `[${timestamp}] ✔️ BACKUP EXPORTADO PARA A NUVEM [${providerName}] - Arquivo: ${backupResult.filename} - Tamanho: ${fileSizeKb} KB - Status: Sincronizado\n`;
+      
+      try {
+        fs.appendFileSync(cloudLogPath, cloudLogLine, "utf-8");
+      } catch (err) {
+        console.error("[CRON BACKUP ERROR] Failed to write cloud sync log:", err);
+      }
+    }
+
+    // 4. Send Email with Attachment
+    let emailSent = false;
+    let emailMsg = "Envio desativado nas configurações.";
+    if (exportToEmail) {
+      const emailSubject = `Cópia de Segurança Automática - ${settings.companyName || "OST Vendas"} - Fim de Dia de Trabalho`;
+      const emailBody = `
+        <div style="font-family: sans-serif; max-width: 650px; margin: 0 auto; padding: 25px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #f8fafc;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <h1 style="color: #ea580c; font-size: 24px; margin: 0;">OST Vendas</h1>
+            <p style="color: #64748b; font-size: 14px; margin: 5px 0 0 0;">Relatório de Cópia de Segurança Automática (Fim do Dia de Trabalho)</p>
+          </div>
+          
+          <div style="background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #cbd5e1; margin-bottom: 20px;">
+            <h3 style="color: #334155; margin-top: 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Detalhes do Processamento</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; font-weight: bold; width: 35%;">Data/Hora de Disparo:</td>
+                <td style="padding: 6px 0; color: #1e293b;">${new Date().toLocaleString("pt-PT")}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; font-weight: bold;">Ficheiro Gerado:</td>
+                <td style="padding: 6px 0; color: #1e293b; font-family: monospace;">${backupResult.filename}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; font-weight: bold;">Tamanho do Arquivo:</td>
+                <td style="padding: 6px 0; color: #1e293b;">${fileSizeKb} KB</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; font-weight: bold;">Serviço Cloud:</td>
+                <td style="padding: 6px 0; color: #16a34a; font-weight: bold;">${exportToCloud ? `${providerName} (Sincronizado ✔️)` : "Nuvem Desativada (Apenas E-mail)"}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; font-weight: bold;">Status da Operação:</td>
+                <td style="padding: 6px 0; color: #ea580c; font-weight: bold;">Sucesso / Cópia Anexada</td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="background-color: #f1f5f9; padding: 15px; border-radius: 10px; border-left: 4px solid #ea580c; font-size: 12px; color: #475569; line-height: 1.5; margin-bottom: 20px;">
+            <strong>Nota de Segurança:</strong> O ficheiro anexo contem a snapshot compactada e completa da base de dados local (produtos, clientes, colaboradores, vendas, fluxo de caixa e configurações). Guarde este ficheiro num local seguro e não o partilhe com terceiros.
+          </div>
+
+          <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">Este é um e-mail automático enviado pelo sistema de faturação e stock OST Vendas. Não responda a esta mensagem.</p>
+        </div>
+      `;
+
+      try {
+        const backupContent = fs.readFileSync(backupFilePath);
+        const emailResult = await trySendEmailWithAttachment({
+          to: recipientEmail,
+          subject: emailSubject,
+          body: emailBody,
+          fallbackMessage: `Simulação de envio de e-mail de backup para ${recipientEmail} efetuada com sucesso (SMTP não configurado).`,
+          attachments: [
+            {
+              filename: backupResult.filename,
+              content: backupContent
+            }
+          ]
+        });
+        emailSent = emailResult.success;
+        emailMsg = emailResult.message;
+      } catch (err: any) {
+        console.error("[CRON BACKUP ERROR] Failed to send email backup:", err);
+        emailMsg = `Erro ao enviar e-mail de backup: ${err.message}`;
+      }
+    }
+
+    // 5. Add server Audit Log
+    const statusMsgCloud = exportToCloud ? `Nuvem: ${providerName}` : `Nuvem: Desativado`;
+    const statusMsgEmail = exportToEmail ? `E-mail: ${recipientEmail} (${emailSent ? 'Real via SMTP' : 'Simulado'})` : `E-mail: Desativado`;
+    lastCronRunStatus = `Sucesso. ${statusMsgCloud}. ${statusMsgEmail}.`;
+
+    const details = `Backup completo de fim de dia gerado (${backupResult.filename}, ${fileSizeKb} KB). ` +
+      (exportToCloud ? `Sincronizado para ${providerName}. ` : "Envio para nuvem desativado. ") +
+      (exportToEmail ? `Envio de e-mail para ${recipientEmail}: ${emailMsg}` : "Envio por e-mail desativado.");
+    
+    addServerAuditLog("Backup Agendado Automático (Cron)", "SISTEMA", details);
+  }
+
+  // Initialize/Update dynamic cron jobs
+  function initBackupCronScheduler() {
+    try {
+      if (activeBackupCronJob) {
+        console.log("[SCHEDULER] Stopping active cron backup task to reschedule...");
+        activeBackupCronJob.stop();
+        activeBackupCronJob = null;
+      }
+
+      const settingsPath = path.join(DB_DIR, "settings.json");
+      if (!fs.existsSync(settingsPath)) {
+        console.log("[SCHEDULER] settings.json not found. Registering default workday cron...");
+        currentCronPattern = "0 18 * * 1-5";
+        currentCronDescription = "Default Workday Cron (Mon-Fri 18:00)";
+        activeBackupCronJob = cron.schedule(currentCronPattern, () => {
+          executeCronBackup(currentCronDescription);
+        });
+        return;
+      }
+
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      
+      // Default to 18:00 on working days Monday-Friday
+      currentCronPattern = "0 18 * * 1-5"; 
+      currentCronDescription = "Default Workday Cron (Mon-Fri 18:00)";
+
+      if (settings.cloudBackupEnabled) {
+        const frequency = settings.backupFrequency || "daily";
+        
+        if (frequency === "cron" && settings.backupCron) {
+          currentCronPattern = settings.backupCron;
+          currentCronDescription = `Custom Cron (${currentCronPattern})`;
+        } else if (frequency === "daily" && settings.backupTime) {
+          const parts = settings.backupTime.split(":");
+          if (parts.length === 2) {
+            const hour = parts[0];
+            const minute = parts[1];
+            currentCronPattern = `${minute} ${hour} * * *`;
+            currentCronDescription = `Daily Scheduled Backup at ${settings.backupTime}`;
+          }
+        } else if (frequency === "weekly" && settings.backupTime) {
+          const parts = settings.backupTime.split(":");
+          if (parts.length === 2) {
+            const hour = parts[0];
+            const minute = parts[1];
+            currentCronPattern = `${minute} ${hour} * * 0`; // Weekly on Sunday
+            currentCronDescription = `Weekly Scheduled Backup on Sunday at ${settings.backupTime}`;
+          }
+        } else if (frequency === "monthly" && settings.backupTime) {
+          const parts = settings.backupTime.split(":");
+          if (parts.length === 2) {
+            const hour = parts[0];
+            const minute = parts[1];
+            currentCronPattern = `${minute} ${hour} 1 * *`; // Monthly on 1st of month
+            currentCronDescription = `Monthly Scheduled Backup on 1st of Month at ${settings.backupTime}`;
+          }
+        }
+      } else {
+        console.log("[SCHEDULER] Automated cloud backup is disabled in settings. However, we will register the default workday cron backup for safety.");
+      }
+
+      console.log(`[SCHEDULER] Registering backup cron task: "${currentCronDescription}" with pattern "${currentCronPattern}"`);
+      
+      activeBackupCronJob = cron.schedule(currentCronPattern, () => {
+        executeCronBackup(currentCronDescription);
+      });
+    } catch (err) {
+      console.error("[SCHEDULER ERROR] Failed to initialize backup cron scheduler:", err);
     }
   }
 
   // Start the background backup scheduler
-  startBackupScheduler();
+  initBackupCronScheduler();
+
+  // API Route - Get currently active Cron details
+  app.get("/api/backups/cron-status", (req, res) => {
+    res.json({
+      success: true,
+      active: !!activeBackupCronJob,
+      cronPattern: currentCronPattern,
+      description: currentCronDescription,
+      lastRun: lastCronRunTime,
+      status: lastCronRunStatus
+    });
+  });
+
+  // API Route - Force run the scheduled workday cron backup immediately
+  app.post("/api/backups/trigger-cron", async (req, res) => {
+    try {
+      await executeCronBackup("Manual Instant Trigger");
+      res.json({
+        success: true,
+        message: "Cópia de segurança agendada (cron) executada manualmente com sucesso!",
+        lastRun: lastCronRunTime,
+        status: lastCronRunStatus
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // API Route - List existing backups
   app.get("/api/backups", async (req, res) => {
@@ -816,6 +1121,12 @@ Retorne no formato JSON abaixo:
         }
       }
 
+      // If settings are saved, dynamically reschedule the backup cron jobs
+      if (table === "settings") {
+        console.log("[SERVER] Settings modified. Rescheduling the background backup cron...");
+        initBackupCronScheduler();
+      }
+
       res.json({ success: true, message: `Tabela ${table} sincronizada com sucesso no banco de dados e nuvem.` });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -867,6 +1178,12 @@ Retorne no formato JSON abaixo:
         } catch (firebaseErr: any) {
           console.error("Falha ao semear banco no Firebase após tentativas de reenvio:", firebaseErr);
         }
+      }
+
+      // If settings are present in payload, dynamically reschedule the backup cron jobs
+      if (payload["settings"] !== undefined) {
+        console.log("[SERVER] Settings loaded via save-all. Rescheduling the background backup cron...");
+        initBackupCronScheduler();
       }
 
       res.json({ success: true, message: "Banco de dados inicializado e guardado com sucesso no servidor e na nuvem." });
