@@ -1957,13 +1957,21 @@ export default function POSModule({
               <p className="text-xs text-slate-400 mt-1">Transação consolidada e stock comercial deduzido.</p>
             </div>
 
-            {/* Simulated Receipt Display */}
-            <div className="border border-slate-200 bg-slate-50 rounded-xl p-4 font-mono text-[11px] leading-tight text-slate-700 select-all max-h-60 overflow-y-auto">
-              <div className="text-center font-bold text-slate-800 mb-2 border-b border-dashed border-slate-300 pb-2">
-                <p className="uppercase">OST COMÉRCIO CENTRAL</p>
-                <p className="font-normal text-[9px] text-slate-500 font-sans">Av. Marginal, Kiosk 14, Maputo</p>
-                <p className="font-normal text-[9px] text-slate-500 font-sans">NUIT: 400293112</p>
-              </div>
+              {/* Simulated Receipt Display */}
+              <div className="border border-slate-200 bg-slate-50 rounded-xl p-4 font-mono text-[11px] leading-tight text-slate-700 select-all max-h-60 overflow-y-auto">
+                <div className="text-center font-bold text-slate-800 mb-2 border-b border-dashed border-slate-300 pb-2">
+                  {settings.logoUrl && (
+                    <img
+                      src={settings.logoUrl}
+                      alt="Logo Recibo"
+                      className="w-10 h-10 object-contain mx-auto mb-1.5 bg-white p-0.5 rounded border border-slate-200"
+                      referrerPolicy="no-referrer"
+                    />
+                  )}
+                  <p className="uppercase">{settings.companyName || "OST COMÉRCIO CENTRAL"}</p>
+                  <p className="font-normal text-[9px] text-slate-500 font-sans">{settings.storeAddress || "Av. Marginal, Kiosk 14, Maputo"}</p>
+                  <p className="font-normal text-[9px] text-slate-500 font-sans">NUIT: {settings.companyNuit || "400293112"}</p>
+                </div>
 
               <div className="space-y-1 mb-2">
                 <p><span className="text-slate-450">Fatura:</span> {completedTx.invoiceNumber}</p>

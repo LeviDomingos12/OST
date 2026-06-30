@@ -32,6 +32,7 @@ import {
 interface LoginModuleProps {
   employees: Employee[];
   companyName: string;
+  logoUrl?: string;
   onLoginSuccess: (user: Employee, company: string) => void;
   onShowToast: (message: string, type: "success" | "error" | "info" | "warning", title?: string) => void;
 }
@@ -39,6 +40,7 @@ interface LoginModuleProps {
 export default function LoginModule({
   employees,
   companyName,
+  logoUrl,
   onLoginSuccess,
   onShowToast
 }: LoginModuleProps) {
@@ -357,7 +359,7 @@ export default function LoginModule({
         {/* Brand Header */}
         <div className="flex items-center gap-3">
           <img
-            src="/src/assets/images/app_logo_1782658148089.jpg"
+            src={logoUrl || "/src/assets/images/app_logo_1782658148089.jpg"}
             alt="OST Vendas Logo"
             className="w-12 h-12 rounded-2xl object-contain bg-white p-1 shrink-0 shadow-lg shadow-orange-950/20"
             referrerPolicy="no-referrer"
@@ -557,7 +559,7 @@ export default function LoginModule({
             {/* Mobile Header Logo */}
             <div className="flex lg:hidden items-center gap-3 justify-center mb-6">
               <img
-                src="/src/assets/images/app_logo_1782658148089.jpg"
+                src={logoUrl || "/src/assets/images/app_logo_1782658148089.jpg"}
                 alt="OST Vendas Logo"
                 className="w-10 h-10 rounded-xl object-contain bg-white p-1 shrink-0 shadow-lg shadow-orange-500/20"
                 referrerPolicy="no-referrer"

@@ -549,7 +549,7 @@ export default function CashRegisterModule({
   const handleExportPDF = async () => {
     const doc = new jsPDF();
     
-    const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+    const logoData = await getBase64ImageFromUrl(settings?.logoUrl || "/src/assets/images/app_logo_1782658148089.jpg");
     if (logoData) {
       doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
     }
@@ -587,7 +587,7 @@ export default function CashRegisterModule({
     try {
       const doc = new jsPDF();
       
-      const logoData = await getBase64ImageFromUrl("/src/assets/images/app_logo_1782658148089.jpg");
+      const logoData = await getBase64ImageFromUrl(settings?.logoUrl || "/src/assets/images/app_logo_1782658148089.jpg");
       if (logoData) {
         doc.addImage(logoData, "JPEG", 165, 8, 30, 30);
       }

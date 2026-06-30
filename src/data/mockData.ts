@@ -135,7 +135,8 @@ export const defaultSettings: SystemSettings = {
   printerPort: "COM1",
   printerBaudRate: "9600",
   printerType: "RECEIPT",
-  paperSize: "80MM"
+  paperSize: "80MM",
+  printerAutoCut: true
 };
 
 export interface MasterclassVideo {

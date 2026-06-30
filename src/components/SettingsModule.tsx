@@ -28,7 +28,10 @@ import {
   Smartphone,
   MessageSquare,
   Usb,
-  Tag
+  Tag,
+  Camera,
+  Sparkles,
+  Image
 } from "lucide-react";
 import { SystemSettings, UserRole, Employee } from "../types";
 import { initAuth, googleSignIn, logout, getAccessToken, getLogsFromFirestore } from "../lib/firebase";
@@ -71,6 +74,16 @@ export default function SettingsModule({
   const [storeAddress, setStoreAddress] = useState(settings.storeAddress);
   const [storeContact, setStoreContact] = useState(settings.storeContact);
   const [defaultVat, setDefaultVat] = useState(settings.defaultVat);
+
+  // Logo upload and generation states
+  const [logoUrl, setLogoUrl] = useState(settings.logoUrl || "");
+  const [isGeneratingLogo, setIsGeneratingLogo] = useState(false);
+  const [logoPrompt, setLogoPrompt] = useState("");
+  const [showAiLogoPanel, setShowAiLogoPanel] = useState(false);
+  const [showCameraPanel, setShowCameraPanel] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState("");
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
 
   // Gateway credentials configurations (MPesa, EMola)
 
@@ -466,6 +479,7 @@ export default function SettingsModule({
   const [printerBaudRate, setPrinterBaudRate] = useState(settings.printerBaudRate || "9600");
   const [printerType, setPrinterType] = useState<"RECEIPT" | "LABEL">(settings.printerType || "RECEIPT");
   const [paperSize, setPaperSize] = useState<"A4" | "80MM" | "58MM">(settings.paperSize || "80MM");
+  const [printerAutoCut, setPrinterAutoCut] = useState(settings.printerAutoCut !== undefined ? settings.printerAutoCut : true);
   const [isTestingPrinter, setIsTestingPrinter] = useState(false);
   const [printerLogs, setPrinterLogs] = useState<string[]>([]);
   const [showTestReceipt, setShowTestReceipt] = useState(false);
@@ -640,7 +654,9 @@ export default function SettingsModule({
       `[${new Date().toLocaleTimeString()}] ✅ Dispositivo detetado com sucesso: ${printerName}.`,
       `[${new Date().toLocaleTimeString()}] 📄 Preparando ${printerType === "RECEIPT" ? "cupom" : "etiqueta"} de teste (${paperSize})...`,
       `[${new Date().toLocaleTimeString()}] 📤 Enviando buffer para fila de impressão...`,
-      `[${new Date().toLocaleTimeString()}] ✂️ Enviando comando de guilhotina (corte)...`,
+      printerAutoCut 
+        ? `[${new Date().toLocaleTimeString()}] ✂️ Enviando comando de guilhotina ESC/POS (Corte Total: GS V 66 0)...`
+        : `[${new Date().toLocaleTimeString()}] ✂️ Corte Automático de Papel desativado nas configurações. Ignorando comando de guilhotina.`,
       `[${new Date().toLocaleTimeString()}] ✔️ ${printerType === "RECEIPT" ? "Cupom" : "Etiqueta"} de teste impresso com sucesso!`
     ];
 
@@ -680,14 +696,15 @@ export default function SettingsModule({
       printerPort,
       printerBaudRate,
       printerType,
-      paperSize
+      paperSize,
+      printerAutoCut
     });
 
     setFeedbackMsg("Configuração da Impressora de Vendas salva com sucesso!");
     onAddAuditLog(
       "Configuração da Impressora",
       "CONFIGURAÇÕES",
-      `Impressora configurada: ${printerName}, Tipo: ${printerType}, Papel: ${paperSize}, Conectividade: ${printerConnectionType}.`
+      `Impressora configurada: ${printerName}, Tipo: ${printerType}, Papel: ${paperSize}, Conectividade: ${printerConnectionType}, Corte Automático: ${printerAutoCut ? "Ativo" : "Inativo"}.`
     );
     if (onShowToast) onShowToast("As configurações da Impressora de Vendas foram gravadas com sucesso!", "success", "Configurações Salvas");
     setTimeout(() => setFeedbackMsg(""), 2200);
@@ -700,6 +717,7 @@ export default function SettingsModule({
     setStoreAddress(settings.storeAddress || "");
     setStoreContact(settings.storeContact || "");
     setDefaultVat(settings.defaultVat !== undefined ? settings.defaultVat : settings.vatDefaultRate || 16);
+    setLogoUrl(settings.logoUrl || "");
     
     setReportRecipientEmail(settings.reportRecipientEmail || "");
     setReportHour(settings.reportHour || "02:00");
@@ -736,6 +754,7 @@ export default function SettingsModule({
     setPrinterBaudRate(settings.printerBaudRate || "9600");
     setPrinterType(settings.printerType || "RECEIPT");
     setPaperSize(settings.paperSize || "80MM");
+    setPrinterAutoCut(settings.printerAutoCut !== undefined ? settings.printerAutoCut : true);
   }, [settings]);
 
   useEffect(() => {
@@ -947,6 +966,159 @@ export default function SettingsModule({
     }
   };
 
+  const startCamera = async () => {
+    setCameraError("");
+    setShowCameraPanel(true);
+    setShowAiLogoPanel(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 300, height: 300, facingMode: "environment" } });
+      setCameraStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+      }
+    } catch (err: any) {
+      console.error("Camera access error:", err);
+      setCameraError("Não foi possível aceder à câmara do dispositivo. Certifique-se de que deu permissões.");
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setShowCameraPanel(false);
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 300;
+      canvas.height = 300;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(videoRef.current, 0, 0, 300, 300);
+        const dataUrl = canvas.toDataURL("image/png");
+        setLogoUrl(dataUrl);
+        if (onShowToast) onShowToast("Logotipo capturado pela câmara com sucesso!", "success");
+      }
+      stopCamera();
+    }
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        if (onShowToast) onShowToast("O ficheiro de imagem deve ter menos de 2 MB.", "warning");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === "string") {
+          setLogoUrl(reader.result);
+          if (onShowToast) onShowToast("Logotipo carregado com sucesso!", "success");
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const generateOfflineLogoPNG = (compName: string, promptText: string): string => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 200;
+    canvas.height = 200;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "";
+    
+    const nameInitial = (compName || "OST").trim().charAt(0).toUpperCase();
+    const colors = ["#f97316", "#3b82f6", "#10b981", "#8b5cf6", "#ec4899", "#eab308"];
+    const colorIndex = nameInitial.charCodeAt(0) % colors.length;
+    const primaryColor = colors[colorIndex];
+    
+    // Background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, 200, 200);
+    
+    // Rounded rect outer
+    ctx.fillStyle = "#f8fafc";
+    ctx.beginPath();
+    ctx.rect(10, 10, 180, 180);
+    ctx.fill();
+    
+    // Circle ring
+    ctx.strokeStyle = primaryColor;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(100, 100, 75, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    // Rotated inner diamond
+    ctx.save();
+    ctx.translate(100, 100);
+    ctx.rotate(45 * Math.PI / 180);
+    ctx.fillStyle = primaryColor;
+    ctx.beginPath();
+    ctx.rect(-35, -35, 70, 70);
+    ctx.fill();
+    ctx.restore();
+    
+    // Text Initial
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 36px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(nameInitial, 100, 100);
+    
+    // Bottom mini text
+    ctx.fillStyle = "#64748b";
+    ctx.font = "bold 9px monospace";
+    ctx.fillText("EST. 2026", 100, 160);
+    
+    return canvas.toDataURL("image/png");
+  };
+
+  const handleGenerateLogoWithAI = async () => {
+    if (!logoPrompt.trim()) {
+      if (onShowToast) onShowToast("Introduza uma descrição/prompt para gerar o logotipo.", "warning");
+      return;
+    }
+    setIsGeneratingLogo(true);
+    try {
+      const response = await fetch("/api/gemini/generate-logo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: logoPrompt })
+      });
+      if (!response.ok) {
+        throw new Error("Falha ao comunicar com o servidor de IA.");
+      }
+      const data = await response.json();
+      if (data.success) {
+        if (data.fallback) {
+          const generatedPng = generateOfflineLogoPNG(companyName, logoPrompt);
+          setLogoUrl(generatedPng);
+          if (onShowToast) onShowToast("Gerado logotipo offline corporativo!", "success", "Gerador Offline");
+        } else {
+          setLogoUrl(data.imageUrl);
+          if (onShowToast) onShowToast("Logotipo gerado por inteligência artificial com sucesso!", "success", "Gerado por IA");
+        }
+        setShowAiLogoPanel(false);
+      } else {
+        throw new Error(data.error || "Erro desconhecido.");
+      }
+    } catch (err: any) {
+      console.error("Error generating logo via AI:", err);
+      const generatedPng = generateOfflineLogoPNG(companyName, logoPrompt);
+      setLogoUrl(generatedPng);
+      if (onShowToast) onShowToast("Logotipo gerado localmente devido a restrições de rede.", "success", "Gerador Offline");
+      setShowAiLogoPanel(false);
+    } finally {
+      setIsGeneratingLogo(false);
+    }
+  };
+
   const handleSaveCompanyConfig = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -956,14 +1128,15 @@ export default function SettingsModule({
       companyNuit,
       storeAddress,
       storeContact,
-      defaultVat
+      defaultVat,
+      logoUrl
     });
 
     setFeedbackMsg("Configurações do Estabelecimento Comercial salvas com sucesso!");
     onAddAuditLog(
       "Alterações de Configurações do Sistema",
       "CONFIGURAÇÕES",
-      `Perfil institucional atualizado: ${companyName}, NUIT: ${companyNuit}, IVA: ${defaultVat}%.`
+      `Perfil institucional atualizado: ${companyName}, NUIT: ${companyNuit}, IVA: ${defaultVat}%, Logotipo: ${logoUrl ? "Definido" : "Não Definido"}.`
     );
     if (onShowToast) {
       onShowToast("Os dados cadastrais e fiscais do estabelecimento foram salvos!", "success", "Dados Gravados");
@@ -1429,6 +1602,182 @@ export default function SettingsModule({
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono font-semibold outline-none text-slate-850"
                   placeholder="+258 84 900 1200"
                 />
+              </div>
+
+              {/* Logotipo da Empresa Section */}
+              <div className="space-y-3 pt-3 border-t border-slate-100">
+                <label className="text-[10px] font-bold text-slate-500 uppercase block">Logotipo do Estabelecimento</label>
+                
+                <div className="flex flex-col sm:flex-row gap-4 items-center">
+                  {/* Current Logo Preview */}
+                  <div className="relative group w-24 h-24 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
+                    {logoUrl ? (
+                      <>
+                        <img 
+                          src={logoUrl} 
+                          alt="Logotipo Corporativo" 
+                          className="w-full h-full object-contain p-1"
+                          referrerPolicy="no-referrer"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setLogoUrl("")}
+                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold transition-all"
+                        >
+                          Remover 🗑️
+                        </button>
+                      </>
+                    ) : (
+                      <div className="text-center p-2">
+                        <Building className="w-8 h-8 text-slate-300 mx-auto mb-1" />
+                        <span className="text-[9px] text-slate-400 block font-medium">Sem Logo</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions Panel */}
+                  <div className="flex-1 w-full space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {/* Upload Button */}
+                      <label className="flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold border border-slate-200 rounded-xl text-[11px] cursor-pointer transition-all">
+                        <Upload className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Carregar</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleLogoUpload}
+                          className="hidden"
+                        />
+                      </label>
+
+                      {/* Camera Button */}
+                      <button
+                        type="button"
+                        onClick={startCamera}
+                        className="flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold border border-slate-200 rounded-xl text-[11px] cursor-pointer transition-all"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Câmara</span>
+                      </button>
+
+                      {/* AI Generator Button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAiLogoPanel(true);
+                          setShowCameraPanel(false);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 font-bold border border-amber-500/20 rounded-xl text-[11px] cursor-pointer transition-all"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Gerar por IA</span>
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 text-center sm:text-left">
+                      Suporta ficheiros PNG, JPG ou SVG. Tamanho máximo recomendado de 2MB.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Video Stream Camera Overlay/Panel */}
+                {showCameraPanel && (
+                  <div className="p-3 bg-slate-950 text-white rounded-2xl border border-zinc-800 space-y-3 relative overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                    <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <Camera className="w-4 h-4 text-orange-500 animate-pulse" />
+                        Capturar com Câmara
+                      </span>
+                      <button
+                        type="button"
+                        onClick={stopCamera}
+                        className="text-[10px] text-zinc-400 hover:text-white px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800"
+                      >
+                        Fechar ✕
+                      </button>
+                    </div>
+
+                    {cameraError ? (
+                      <p className="text-rose-400 text-[10px] text-center py-4">{cameraError}</p>
+                    ) : (
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-56 h-56 rounded-xl border border-zinc-800 overflow-hidden bg-black relative">
+                          <video
+                            ref={videoRef}
+                            className="w-full h-full object-cover scale-x-[-1]"
+                            playsInline
+                            muted
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={capturePhoto}
+                          className="px-5 py-2 bg-orange-500 hover:bg-orange-600 font-bold rounded-xl text-[11px] text-white flex items-center gap-1.5"
+                        >
+                          <Camera className="w-4 h-4" />
+                          <span>Tirar Foto 📸</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* AI Prompt Generator Panel */}
+                {showAiLogoPanel && (
+                  <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                    <div className="flex justify-between items-center border-b border-slate-200 pb-1.5">
+                      <span className="text-[11px] font-bold text-slate-800 uppercase flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        Gerador de Logotipos com Gemini AI
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAiLogoPanel(false)}
+                        className="text-[10px] text-slate-400 hover:text-slate-600"
+                      >
+                        Fechar ✕
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-bold text-slate-500 uppercase">Sugira ideias para o seu Logotipo (Prompt)</label>
+                      <textarea
+                        value={logoPrompt}
+                        onChange={(e) => setLogoPrompt(e.target.value)}
+                        placeholder="Ex: Um logotipo minimalista com um carrinho de compras laranja e folhas verdes, fundo branco, estilo clean"
+                        className="w-full bg-white border border-slate-200 rounded-xl p-2.5 outline-none text-xs text-slate-800 resize-none h-16 leading-relaxed"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={isGeneratingLogo}
+                        onClick={handleGenerateLogoWithAI}
+                        className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-500/50 text-white font-bold rounded-xl text-[11px] flex items-center justify-center gap-1.5"
+                      >
+                        {isGeneratingLogo ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>A gerar logotipo...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Gerar Logotipo Inteligente ⚡</span>
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLogoPrompt("Um ícone moderno de tecnologia para varejo, cor azul e laranja, estilo flat")}
+                        className="px-3 py-2 bg-slate-200/60 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-[10px]"
+                        title="Sugestão de Prompt"
+                      >
+                        Dica 💡
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <button
@@ -2845,6 +3194,22 @@ export default function SettingsModule({
                       ? "O tamanho do papel define a largura física do cupom virtual gerado nas vendas."
                       : "Para etiquetas adesivas, recomenda-se o formato de 58mm ou 80mm."}
                   </p>
+                </div>
+
+                <div className="flex items-center justify-between bg-orange-50/30 p-2.5 rounded-xl border border-orange-100/60">
+                  <div className="space-y-0.5">
+                    <label className="text-[10px] font-bold text-slate-700 cursor-pointer select-none flex items-center gap-1.5">
+                      Corte Automático de Papel
+                    </label>
+                    <p className="text-[9px] text-slate-400 leading-tight">Envia o comando ESC/POS de corte (GS V 66 0) após a impressão do recibo.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    disabled={!canEdit}
+                    checked={printerAutoCut}
+                    onChange={(e) => setPrinterAutoCut(e.target.checked)}
+                    className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-4 h-4 cursor-pointer"
+                  />
                 </div>
 
                 <div className="space-y-1">

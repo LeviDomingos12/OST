@@ -229,6 +229,66 @@ Retorne no formato JSON abaixo:
     }
   });
 
+  // API Route - AI Logo Generator
+  app.post("/api/gemini/generate-logo", async (req, res) => {
+    try {
+      const { prompt } = req.body;
+      if (!prompt) {
+        return res.status(400).json({ error: "O prompt é obrigatório para gerar o logotipo." });
+      }
+
+      const ai = getAiClient();
+      if (!ai) {
+        console.log("Sem cliente de IA ativo. Retornando resposta de simulação offline.");
+        return res.json({
+          success: true,
+          fallback: true,
+          message: "Chave GEMINI_API_KEY não configurada. Ativando gerador offline de logotipos."
+        });
+      }
+
+      console.log(`[AI LOGO GENERATOR] Gerando logotipo para o prompt: "${prompt}"...`);
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite-image",
+        contents: {
+          parts: [
+            {
+              text: `A professional, clean, minimalist business logo icon, centered, solid white or elegant background, vector art, suitable for a retail POS company logo. Concept details: ${prompt}`,
+            },
+          ],
+        },
+        config: {
+          imageConfig: {
+            aspectRatio: "1:1"
+          }
+        }
+      });
+
+      let base64Data = "";
+      if (response.candidates?.[0]?.content?.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.inlineData) {
+            base64Data = part.inlineData.data;
+            break;
+          }
+        }
+      }
+
+      if (!base64Data) {
+        throw new Error("O modelo não retornou dados de imagem.");
+      }
+
+      res.json({
+        success: true,
+        imageUrl: `data:image/png;base64,${base64Data}`
+      });
+    } catch (error: any) {
+      console.error("Erro ao gerar logotipo com Gemini:", error);
+      res.status(500).json({ error: error.message || "Erro desconhecido na geração de imagem com a IA." });
+    }
+  });
+
   // API Route - Email sending simulation/SMTP dispatch
   app.post("/api/email/send-report", async (req, res) => {
     try {

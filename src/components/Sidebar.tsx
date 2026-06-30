@@ -22,6 +22,7 @@ interface SidebarProps {
   activeModule: string;
   onChangeModule: (module: string) => void;
   companyName: string;
+  logoUrl?: string;
   onLogout?: () => void;
 }
 
@@ -31,6 +32,7 @@ export default function Sidebar({
   activeModule,
   onChangeModule,
   companyName,
+  logoUrl,
   onLogout
 }: SidebarProps) {
   
@@ -73,7 +75,7 @@ export default function Sidebar({
       {/* Brand Header */}
       <div className="p-6 border-b border-zinc-800/80 flex items-center gap-3">
         <img
-          src="/src/assets/images/app_logo_1782658148089.jpg"
+          src={logoUrl || "/src/assets/images/app_logo_1782658148089.jpg"}
           alt="OST Vendas Logo"
           className="w-11 h-11 rounded-xl object-contain bg-white p-1 shrink-0"
           referrerPolicy="no-referrer"

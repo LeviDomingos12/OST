@@ -169,6 +169,7 @@ export interface SystemSettings {
   printerBaudRate?: string;
   printerType?: "RECEIPT" | "LABEL";
   paperSize?: "A4" | "80MM" | "58MM";
+  printerAutoCut?: boolean;
 }
 
 export interface MasterclassVideo {

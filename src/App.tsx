@@ -1003,6 +1003,7 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
       <LoginModule
         employees={employees}
         companyName={settings.companyName}
+        logoUrl={settings.logoUrl}
         onLoginSuccess={handleLoginSuccess}
         onShowToast={showToast}
       />
@@ -1025,6 +1026,7 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
           activeModule={activeTab.toLowerCase()}
           onChangeModule={(mod) => setActiveTab(mod.toUpperCase())}
           companyName={settings.companyName}
+          logoUrl={settings.logoUrl}
           onLogout={handleLogout}
         />
       )}
@@ -1053,7 +1055,15 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
                 <span>{isOnline ? "SISTEMA ONLINE" : "SISTEMA OFFLINE"}</span>
               </div>
   
-              <div className="hidden lg:flex items-center gap-1 text-[11px] font-mono opacity-80">
+              <div className="hidden lg:flex items-center gap-2 text-[11px] font-mono opacity-80">
+                {settings.logoUrl && (
+                  <img
+                    src={settings.logoUrl}
+                    alt="Logo Mini"
+                    className="w-5 h-5 rounded-md object-contain bg-white p-0.5 border border-slate-200 shrink-0"
+                    referrerPolicy="no-referrer"
+                  />
+                )}
                 <span className={theme === "night" ? "text-slate-400" : "text-slate-600"}>Empresa:</span>
                 <span className={`font-bold uppercase ${theme === "night" ? "text-white" : "text-slate-800"}`}>
                   {settings.companyName}
@@ -1276,6 +1286,7 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
                   onAddAuditLog={handleAddAuditLog}
                   currentRole={simplifiedRole}
                   currency={currency}
+                  settings={settings}
                 />
               )}
 
