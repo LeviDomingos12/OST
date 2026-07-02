@@ -34,7 +34,9 @@ import {
   X,
   FileSpreadsheet,
   FileText,
-  MessageSquare
+  MessageSquare,
+  MapPin,
+  ArrowLeftRight
 } from "lucide-react";
 import { 
   ResponsiveContainer, 
@@ -51,7 +53,7 @@ import {
 } from "recharts";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Product, UserRole, Transaction, SystemSettings } from "../types";
+import { Product, UserRole, Transaction, SystemSettings, StockTransfer } from "../types";
 
 const getBase64ImageFromUrl = async (imageUrl: string): Promise<string> => {
   try {
@@ -80,6 +82,7 @@ interface StockModuleProps {
   currency: string;
   settings?: SystemSettings;
   onShowToast?: (message: string, type: "success" | "error" | "info" | "warning", title?: string) => void;
+  onUpdateSettings?: (settings: Partial<SystemSettings>) => void;
 }
 
 export default function StockModule({
@@ -92,11 +95,12 @@ export default function StockModule({
   currentRole,
   currency,
   settings,
-  onShowToast
+  onShowToast,
+  onUpdateSettings
 }: StockModuleProps) {
   
-  // Local sub-tabs inside Stock module: "list" | "charts" | "reports"
-  const [activeModuleTab, setActiveModuleTab] = useState<"list" | "charts" | "reports">("list");
+  // Local sub-tabs inside Stock module: "list" | "charts" | "reports" | "batches" | "branches"
+  const [activeModuleTab, setActiveModuleTab] = useState<"list" | "charts" | "reports" | "batches" | "branches">("list");
 
   // Local state for filters and search
   const [searchQuery, setSearchQuery] = useState("");
@@ -148,6 +152,20 @@ export default function StockModule({
   const [isReplenishmentModalOpen, setIsReplenishmentModalOpen] = useState(false);
   const [replenishSuccessMsg, setReplenishSuccessMsg] = useState("");
   const [isConfirmingReplenish, setIsConfirmingReplenish] = useState(false);
+
+  // Batch management form states
+  const [batchProductId, setBatchProductId] = useState("");
+  const [batchCode, setBatchCode] = useState("");
+  const [batchQty, setBatchQty] = useState<number>(50);
+  const [batchCost, setBatchCost] = useState<number>(0);
+  const [batchExpiry, setBatchExpiry] = useState("");
+  const [batchSupplier, setBatchSupplier] = useState("");
+
+  // Stock transfer form states
+  const [transferOriginBranchId, setTransferOriginBranchId] = useState("central");
+  const [transferDestBranchId, setTransferDestBranchId] = useState("matola");
+  const [transferProductId, setTransferProductId] = useState("");
+  const [transferQty, setTransferQty] = useState<number>(10);
 
   const handleSendWhatsAppStockAlert = async (product: Product) => {
     if (!settings || !settings.managerWhatsappPhone) {
@@ -1004,6 +1022,30 @@ export default function StockModule({
         >
           <FileSpreadsheet className="w-4 h-4" />
           Relatórios de Estoque
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveModuleTab("batches")}
+          className={`px-4 py-2 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 cursor-pointer ${
+            activeModuleTab === "batches"
+              ? "border-orange-500 text-orange-500 dark:text-amber-400 dark:border-amber-400"
+              : "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300"
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          Lotes, Validades & FIFO
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveModuleTab("branches")}
+          className={`px-4 py-2 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 cursor-pointer ${
+            activeModuleTab === "branches"
+              ? "border-orange-500 text-orange-500 dark:text-amber-400 dark:border-amber-400"
+              : "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-300"
+          }`}
+        >
+          <MapPin className="w-4 h-4" />
+          Filiais & Transferências
         </button>
       </div>
 
@@ -2331,6 +2373,582 @@ export default function StockModule({
                 </table>
               </div>
             )}
+          </div>
+
+        </div>
+      )}
+
+      {/* 4. Batches & Expiry (FIFO/LIFO) Sub-tab */}
+      {activeModuleTab === "batches" && (
+        <div className="space-y-6 animate-in fade-in duration-300">
+          
+          {/* Top Panel: Strategy and Explanation */}
+          <div className="bg-slate-50 p-5 rounded-2xl border border-slate-150 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 dark:bg-zinc-950 dark:border-zinc-800">
+            <div className="space-y-1">
+              <h4 className="font-extrabold text-slate-800 text-sm dark:text-zinc-100 flex items-center gap-1.5">
+                <Layers className="w-5 h-5 text-orange-500" />
+                Estratégia de Consumo de Lotes (Validade/Giro)
+              </h4>
+              <p className="text-xs text-slate-500">
+                O motor OST Vendas utiliza esta estratégia no checkout POS para deduzir automaticamente as validades adequadas.
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-600">Estratégia:</span>
+              <select
+                value={settings?.inventoryStrategy || "FIFO"}
+                onChange={(e) => {
+                  if (onUpdateSettings) {
+                    onUpdateSettings({ inventoryStrategy: e.target.value as any });
+                    if (onShowToast) onShowToast(`Estratégia de stock atualizada para ${e.target.value}!`, "success");
+                  }
+                }}
+                className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 font-bold text-xs outline-none cursor-pointer text-slate-700"
+              >
+                <option value="FIFO">FIFO (First-In, First-Out - Validade mais antiga)</option>
+                <option value="LIFO">LIFO (Last-In, First-Out - Lote mais recente)</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* Form: Register New Batch */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
+              <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider border-b border-slate-100 pb-2 dark:text-zinc-100 dark:border-zinc-800">
+                Cadastrar Novo Lote & Entrada
+              </h4>
+              
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (!batchProductId) {
+                  if (onShowToast) onShowToast("Por favor, selecione um produto.", "error");
+                  return;
+                }
+                if (!batchCode) {
+                  if (onShowToast) onShowToast("Por favor, introduza o código do lote.", "error");
+                  return;
+                }
+                if (batchQty <= 0) {
+                  if (onShowToast) onShowToast("A quantidade deve ser maior que zero.", "error");
+                  return;
+                }
+                if (!batchExpiry) {
+                  if (onShowToast) onShowToast("Por favor, defina uma data de validade.", "error");
+                  return;
+                }
+
+                const prod = products.find(p => p.id === batchProductId);
+                if (!prod) return;
+
+                const newBatch = {
+                  id: `batch-${Date.now()}`,
+                  productId: batchProductId,
+                  productName: prod.name,
+                  batchCode: batchCode,
+                  quantity: batchQty,
+                  initialQuantity: batchQty,
+                  costPrice: batchCost || prod.costPrice,
+                  receivedDate: new Date().toISOString().split("T")[0],
+                  expiryDate: batchExpiry,
+                  supplier: batchSupplier || prod.supplier || "Geral"
+                };
+
+                const currentBatches = settings?.batches || [];
+                const updatedBatches = [...currentBatches, newBatch];
+
+                // Increment general stock
+                onUpdateProduct({
+                  ...prod,
+                  stock: prod.stock + batchQty
+                });
+
+                if (onUpdateSettings) {
+                  onUpdateSettings({ batches: updatedBatches });
+                }
+
+                onAddAuditLog(
+                  "Registrar Novo Lote",
+                  "STOCK",
+                  `Lote ${batchCode} (${batchQty} un) adicionado ao produto ${prod.name} com validade ${batchExpiry}. Estoque geral incrementado.`
+                );
+
+                if (onShowToast) onShowToast(`Lote ${batchCode} registrado com sucesso e adicionado ao stock!`, "success");
+
+                setBatchProductId("");
+                setBatchCode("");
+                setBatchQty(50);
+                setBatchCost(0);
+                setBatchExpiry("");
+                setBatchSupplier("");
+              }} className="space-y-3.5">
+                
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Selecione o Produto</label>
+                  <select
+                    value={batchProductId}
+                    onChange={(e) => {
+                      setBatchProductId(e.target.value);
+                      const prod = products.find(p => p.id === e.target.value);
+                      if (prod) {
+                        setBatchCost(prod.costPrice);
+                        // Generate a suggestion code
+                        setBatchCode(`LT-${prod.name.slice(0, 3).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`);
+                      }
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-xs text-slate-700 outline-none"
+                  >
+                    <option value="">-- Escolha um Produto --</option>
+                    {products.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Código do Lote</label>
+                    <input
+                      type="text"
+                      placeholder="LOTE-XYZ"
+                      value={batchCode}
+                      onChange={(e) => setBatchCode(e.target.value.toUpperCase())}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-xs outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Quantidade Entrada</label>
+                    <input
+                      type="number"
+                      value={batchQty}
+                      onChange={(e) => setBatchQty(parseInt(e.target.value) || 0)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-xs outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Preço de Custo (MT)</label>
+                    <input
+                      type="number"
+                      value={batchCost}
+                      onChange={(e) => setBatchCost(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-xs outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Data de Validade</label>
+                    <input
+                      type="date"
+                      value={batchExpiry}
+                      onChange={(e) => setBatchExpiry(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 px-1.5 font-bold text-xs outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Fornecedor / Origem</label>
+                  <input
+                    type="text"
+                    placeholder="Distribuidor Oficial"
+                    value={batchSupplier}
+                    onChange={(e) => setBatchSupplier(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-xs outline-none"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs transition shadow-md cursor-pointer"
+                >
+                  Registrar Entrada de Lote (+ Stock)
+                </button>
+              </form>
+            </div>
+
+            {/* List: Registered Batches Grid */}
+            <div className="lg:col-span-2 bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
+              <div className="flex justify-between items-center border-b border-slate-100 pb-2 dark:border-zinc-800">
+                <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider dark:text-zinc-100">
+                  Histórico e Estado dos Lotes Registrados
+                </h4>
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-mono">
+                  {(settings?.batches || []).length} lotes ativos
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-[10px] font-bold uppercase text-slate-400 dark:border-zinc-800">
+                      <th className="py-2.5">Produto</th>
+                      <th className="py-2.5">Lote</th>
+                      <th className="py-2.5 text-center">Quant. Atual</th>
+                      <th className="py-2.5 text-right">Preço</th>
+                      <th className="py-2.5 text-center">Validade</th>
+                      <th className="py-2.5 text-center">Estado</th>
+                      <th className="py-2.5 text-right">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50 text-[11px] font-medium text-slate-650 dark:divide-zinc-800/50">
+                    {(settings?.batches || []).length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-slate-400 font-medium italic">
+                          Nenhum lote ou validade registrado no inventário atual.
+                        </td>
+                      </tr>
+                    ) : (
+                      (settings?.batches || []).map((batch) => {
+                        const today = new Date();
+                        const expiry = new Date(batch.expiryDate);
+                        const daysLeft = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                        
+                        let badgeBg = "bg-green-50 text-green-700";
+                        let badgeText = "Em Dia";
+                        if (daysLeft < 0) {
+                          badgeBg = "bg-red-50 text-red-700";
+                          badgeText = "Expirado";
+                        } else if (daysLeft <= 30) {
+                          badgeBg = "bg-amber-50 text-amber-700";
+                          badgeText = `${daysLeft} dias`;
+                        }
+
+                        return (
+                          <tr key={batch.id} className="hover:bg-slate-50/50 transition">
+                            <td className="py-2.5 font-bold text-slate-800 dark:text-zinc-200">{batch.productName}</td>
+                            <td className="py-2.5 font-mono text-xs">{batch.batchCode}</td>
+                            <td className="py-2.5 text-center font-bold">
+                              {batch.quantity} <span className="text-slate-400 text-[10px] font-normal">/ {batch.initialQuantity}</span>
+                            </td>
+                            <td className="py-2.5 text-right font-mono font-bold text-slate-700 dark:text-zinc-300">
+                              {batch.costPrice.toLocaleString()} MT
+                            </td>
+                            <td className="py-2.5 text-center font-mono font-bold">
+                              {new Date(batch.expiryDate).toLocaleDateString()}
+                            </td>
+                            <td className="py-2.5 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide uppercase ${badgeBg}`}>
+                                {badgeText}
+                              </span>
+                            </td>
+                            <td className="py-2.5 text-right">
+                              <button
+                                onClick={() => {
+                                  const updatedBatches = (settings?.batches || []).filter(b => b.id !== batch.id);
+                                  if (onUpdateSettings) {
+                                    onUpdateSettings({ batches: updatedBatches });
+                                  }
+                                  onAddAuditLog(
+                                    "Excluir Lote",
+                                    "STOCK",
+                                    `Lote ${batch.batchCode} de ${batch.productName} excluído do sistema por operador.`
+                                  );
+                                  if (onShowToast) onShowToast(`Lote ${batch.batchCode} removido.`, "info");
+                                }}
+                                className="p-1 hover:bg-red-50 rounded-lg text-red-500 hover:text-red-700 transition cursor-pointer"
+                                title="Remover este lote"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
+      {/* 5. Branches & Geographical Stock Sub-tab */}
+      {activeModuleTab === "branches" && (
+        <div className="space-y-6 animate-in fade-in duration-300">
+          
+          {/* Active Branch Selector Info */}
+          <div className="bg-slate-50 p-5 rounded-2xl border border-slate-150 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 dark:bg-zinc-950 dark:border-zinc-800">
+            <div className="space-y-1">
+              <h4 className="font-extrabold text-slate-800 text-sm dark:text-zinc-100 flex items-center gap-1.5">
+                <MapPin className="w-5 h-5 text-orange-500" />
+                Filial de Operação Ativa
+              </h4>
+              <p className="text-xs text-slate-500">
+                Esta é a filial geográfica para a qual todas as vendas do POS atual serão imputadas e os stocks deduzidos.
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-600">Filial Ativa:</span>
+              <select
+                value={settings?.activeBranchId || "central"}
+                onChange={(e) => {
+                  if (onUpdateSettings) {
+                    onUpdateSettings({ activeBranchId: e.target.value });
+                    if (onShowToast) onShowToast(`Filial de vendas atualizada para: [${e.target.value.toUpperCase()}]!`, "success");
+                  }
+                }}
+                className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 font-bold text-xs outline-none cursor-pointer text-slate-700"
+              >
+                {(settings?.branches || []).map(b => (
+                  <option key={b.id} value={b.id}>{b.name} ({b.city})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Cards Grid: Branch Listing */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4.5">
+            {(settings?.branches || []).map((branch) => {
+              // Calculate total stocks inside this branch
+              const totalItems = products.length;
+              const totalQty = products.reduce((sum, p) => {
+                const bStock = p.branchStocks?.[branch.id];
+                return sum + (bStock !== undefined ? bStock : p.stock);
+              }, 0);
+
+              const isActive = (settings?.activeBranchId || "central") === branch.id;
+
+              return (
+                <div
+                  key={branch.id}
+                  className={`p-5 rounded-2xl border transition-all ${
+                    isActive 
+                      ? "bg-orange-50/40 border-orange-200 shadow-sm" 
+                      : "bg-white border-slate-100 hover:border-slate-200"
+                  } dark:bg-zinc-900 dark:border-zinc-800`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-slate-400 font-extrabold text-[9px] font-mono uppercase tracking-widest">{branch.code}</span>
+                      <h4 className="font-bold text-slate-800 text-sm dark:text-zinc-100 mt-0.5">{branch.name}</h4>
+                      <p className="text-[10px] text-slate-400 mt-1">{branch.address}, {branch.city}</p>
+                    </div>
+                    <span className={`w-2.5 h-2.5 rounded-full ${isActive ? 'bg-orange-500 animate-pulse' : 'bg-slate-350'}`} />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 mt-4.5 pt-3.5 border-t border-slate-100 font-mono text-slate-650 dark:border-zinc-800">
+                    <div>
+                      <p className="text-[9px] text-slate-400 uppercase font-sans">Variedade Itens</p>
+                      <p className="font-bold text-slate-700 dark:text-zinc-200 text-xs mt-0.5">{totalItems} prods</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-slate-400 uppercase font-sans">Stock Consolidado</p>
+                      <p className="font-bold text-slate-800 dark:text-zinc-100 text-xs mt-0.5">{totalQty.toLocaleString()} un</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* Form: Stock Transfer between stores */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
+              <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider border-b border-slate-100 pb-2 dark:text-zinc-100 dark:border-zinc-800">
+                Transferência de Stock Inter-Filial
+              </h4>
+
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (transferOriginBranchId === transferDestBranchId) {
+                  if (onShowToast) onShowToast("A filial de origem e destino não podem ser iguais.", "error");
+                  return;
+                }
+                if (!transferProductId) {
+                  if (onShowToast) onShowToast("Por favor, selecione o produto para transferir.", "error");
+                  return;
+                }
+                if (transferQty <= 0) {
+                  if (onShowToast) onShowToast("A quantidade deve ser maior que zero.", "error");
+                  return;
+                }
+
+                const prod = products.find(p => p.id === transferProductId);
+                if (!prod) return;
+
+                const originStocks = prod.branchStocks || {};
+                const currentOriginQty = originStocks[transferOriginBranchId] !== undefined 
+                  ? originStocks[transferOriginBranchId] 
+                  : prod.stock;
+
+                if (currentOriginQty < transferQty) {
+                  if (onShowToast) onShowToast(`Quantidade insuficiente na filial de origem. Stock disponível: ${currentOriginQty} un.`, "error");
+                  return;
+                }
+
+                const destStocks = prod.branchStocks || {};
+                const currentDestQty = destStocks[transferDestBranchId] !== undefined
+                  ? destStocks[transferDestBranchId]
+                  : 0;
+
+                const updatedBranchStocks = {
+                  ...originStocks,
+                  [transferOriginBranchId]: currentOriginQty - transferQty,
+                  [transferDestBranchId]: currentDestQty + transferQty
+                };
+
+                onUpdateProduct({
+                  ...prod,
+                  branchStocks: updatedBranchStocks
+                });
+
+                const newTransfer: StockTransfer = {
+                  id: `st-${Date.now()}`,
+                  originBranchId: transferOriginBranchId,
+                  destinationBranchId: transferDestBranchId,
+                  productId: transferProductId,
+                  productName: prod.name,
+                  quantity: transferQty,
+                  timestamp: new Date().toISOString(),
+                  status: "COMPLETED",
+                  responsibleUser: "Gerente de Logística"
+                };
+
+                const currentTransfers = settings?.stockTransfers || [];
+                const updatedTransfers = [newTransfer, ...currentTransfers];
+
+                if (onUpdateSettings) {
+                  onUpdateSettings({ stockTransfers: updatedTransfers });
+                }
+
+                onAddAuditLog(
+                  "Transferência de Stock Inter-Filial",
+                  "STOCK",
+                  `Transferência de ${transferQty} un de ${prod.name} de [${transferOriginBranchId.toUpperCase()}] para [${transferDestBranchId.toUpperCase()}] concluída.`
+                );
+
+                if (onShowToast) onShowToast(`Transferência de ${transferQty} un de ${prod.name} realizada!`, "success");
+                setTransferProductId("");
+                setTransferQty(10);
+              }} className="space-y-3.5">
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Origem</label>
+                    <select
+                      value={transferOriginBranchId}
+                      onChange={(e) => setTransferOriginBranchId(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 font-bold text-xs text-slate-700 outline-none cursor-pointer"
+                    >
+                      {(settings?.branches || []).map(b => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Destino</label>
+                    <select
+                      value={transferDestBranchId}
+                      onChange={(e) => setTransferDestBranchId(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 font-bold text-xs text-slate-700 outline-none cursor-pointer"
+                    >
+                      {(settings?.branches || []).map(b => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Selecione o Produto</label>
+                  <select
+                    value={transferProductId}
+                    onChange={(e) => setTransferProductId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-xs text-slate-700 outline-none cursor-pointer"
+                  >
+                    <option value="">-- Escolha o Produto --</option>
+                    {products.map(p => {
+                      const branchQty = p.branchStocks?.[transferOriginBranchId] !== undefined
+                        ? p.branchStocks[transferOriginBranchId]
+                        : p.stock;
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {p.name} (Disp: {branchQty} un)
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Quantidade a Transferir</label>
+                  <input
+                    type="number"
+                    value={transferQty}
+                    onChange={(e) => setTransferQty(parseInt(e.target.value) || 0)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-xs outline-none"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs transition shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <ArrowLeftRight className="w-4 h-4" />
+                  Efetuar Guia de Transferência
+                </button>
+              </form>
+            </div>
+
+            {/* List of recent stock transfers */}
+            <div className="lg:col-span-2 bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
+              <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider border-b border-slate-100 pb-2 dark:text-zinc-100 dark:border-zinc-800">
+                Histórico de Guias e Transferências de Stock
+              </h4>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-[10px] font-bold uppercase text-slate-400 dark:border-zinc-800">
+                      <th className="py-2.5">Data/Hora</th>
+                      <th className="py-2.5">Produto</th>
+                      <th className="py-2.5 text-center">Origem</th>
+                      <th className="py-2.5 text-center">Destino</th>
+                      <th className="py-2.5 text-center">Quantidade</th>
+                      <th className="py-2.5 text-center">Responsável</th>
+                      <th className="py-2.5 text-right">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50 text-[11px] font-medium text-slate-650 dark:divide-zinc-800/50">
+                    {(settings?.stockTransfers || []).length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-slate-400 font-medium italic">
+                          Nenhuma guia de transferência inter-filial gerada até ao momento.
+                        </td>
+                      </tr>
+                    ) : (
+                      (settings?.stockTransfers || []).map((st) => (
+                        <tr key={st.id} className="hover:bg-slate-50/50 transition">
+                          <td className="py-2.5 font-mono text-slate-450">{new Date(st.timestamp).toLocaleString()}</td>
+                          <td className="py-2.5 font-bold text-slate-800 dark:text-zinc-200">{st.productName}</td>
+                          <td className="py-2.5 text-center uppercase font-bold text-slate-600">{st.originBranchId}</td>
+                          <td className="py-2.5 text-center uppercase font-bold text-slate-600">{st.destinationBranchId}</td>
+                          <td className="py-2.5 text-center font-bold text-slate-800 dark:text-zinc-100">{st.quantity} un</td>
+                          <td className="py-2.5 text-center text-slate-500">{st.responsibleUser}</td>
+                          <td className="py-2.5 text-right">
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-green-50 text-green-700 tracking-wide uppercase">
+                              Concluído
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
           </div>
 
         </div>

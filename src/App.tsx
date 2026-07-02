@@ -711,6 +711,120 @@ export default function App() {
     handleUpdateSettings({ theme: newThemeId });
   };
 
+  // NEW: Unified local backup creation (supports manual and automatic scheduled runs)
+  const handleTriggerLocalBackup = (type: "manual" | "automatic" = "manual") => {
+    try {
+      const dbPayload = {
+        app: "OST Vendas",
+        exportDate: new Date().toISOString(),
+        version: "3.2.0-Prod-Mozambique",
+        operator: type === "manual" ? (activeUser?.name || "ADMIN") : "Agendador Automático Redundante",
+        data: {
+          settings,
+          products,
+          customers,
+          transactions,
+          cashFlow,
+          employees,
+          auditLogs
+        }
+      };
+
+      const dataStr = JSON.stringify(dbPayload);
+      const backupId = Date.now().toString();
+      
+      // Save full backup payload to a unique key slot
+      localStorage.setItem(`erp_backup_slot_${backupId}`, dataStr);
+      localStorage.setItem("erp_auto_backup_local_db", dataStr);
+      localStorage.setItem("erp_last_auto_backup_time", new Date().toISOString());
+
+      // Update backup logs list
+      let logs: any[] = [];
+      try {
+        const logsStr = localStorage.getItem("erp_local_backups_log");
+        if (logsStr) logs = JSON.parse(logsStr);
+      } catch (e) {}
+      if (!Array.isArray(logs)) logs = [];
+
+      const frequency = settings?.backupFrequency || "daily";
+      
+      const newLog = {
+        id: backupId,
+        date: new Date().toISOString(),
+        type: type === "manual" ? "Manual" : "Automático",
+        frequency: type === "manual" ? "N/A" : (frequency === "daily" ? "Diária" : frequency === "weekly" ? "Semanal" : frequency === "monthly" ? "Mensal" : "12 Horas"),
+        size: dataStr.length,
+        itemCount: (products.length || 0) + (customers.length || 0) + (transactions.length || 0),
+        status: "Sucesso"
+      };
+
+      logs.unshift(newLog);
+      logs = logs.slice(0, 5); // Keep last 5
+      localStorage.setItem("erp_local_backups_log", JSON.stringify(logs));
+
+      // Clean up backup slot keys that are no longer in the logs list
+      const activeIds = logs.map((l: any) => l.id);
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("erp_backup_slot_")) {
+          const id = key.replace("erp_backup_slot_", "");
+          if (!activeIds.includes(id)) {
+            localStorage.removeItem(key);
+          }
+        }
+      }
+
+      handleAddAuditLog(
+        type === "manual" ? "Backup Local Manual" : `Backup Local Automático (${frequency === "daily" ? "Diária" : frequency === "weekly" ? "Semanal" : frequency === "monthly" ? "Mensal" : "12 Horas"})`,
+        type === "manual" ? "SEGURANÇA" : "SISTEMA",
+        `Cópia de segurança gravada localmente com sucesso (${type === "manual" ? "Manual" : settings?.backupFrequency || "Diária"}).`
+      );
+
+      return true;
+    } catch (error) {
+      console.error("Erro ao realizar backup local:", error);
+      return false;
+    }
+  };
+
+  // Automated scheduled database backup to localStorage (runs checking interval every 15m; backups based on user configuration)
+  useEffect(() => {
+    if (!isAuthenticated || products.length === 0) return;
+
+    const runAutomaticBackup = () => {
+      try {
+        const lastBackupTimeStr = localStorage.getItem("erp_last_auto_backup_time");
+        const lastBackupTime = lastBackupTimeStr ? new Date(lastBackupTimeStr).getTime() : 0;
+        const now = Date.now();
+        
+        const frequency = settings?.backupFrequency || "daily";
+        let intervalMs = 24 * 60 * 60 * 1000; // default 1 day (daily)
+        if (frequency === "weekly") {
+          intervalMs = 7 * 24 * 60 * 60 * 1000;
+        } else if (frequency === "monthly") {
+          intervalMs = 30 * 24 * 60 * 60 * 1000;
+        } else if (frequency === "12h") {
+          intervalMs = 12 * 60 * 60 * 1000;
+        }
+
+        if (now - lastBackupTime >= intervalMs) {
+          console.log(`[AUTO-BACKUP] Executando cópia de redundância automática (${frequency})...`);
+          handleTriggerLocalBackup("automatic");
+        }
+      } catch (error) {
+        console.error("[AUTO-BACKUP] Erro ao realizar backup de redundância automática:", error);
+      }
+    };
+
+    // Run check immediately
+    runAutomaticBackup();
+
+    // Check every 15 minutes
+    const intervalId = setInterval(runAutomaticBackup, 900000);
+
+    return () => clearInterval(intervalId);
+  }, [isAuthenticated, products, customers, transactions, cashFlow, employees, auditLogs, settings]);
+
   // ADMIN-ONLY REAL DATABASE EXPORT (JSON DOWNLOAD)
   const handleExportLocalDB = () => {
     const dbPayload = {
@@ -836,31 +950,39 @@ export default function App() {
 
   const triggerEmailStockAlert = async (productName: string, currentStock: number, threshold: number) => {
     const recipientEmail = settings.alertsRecipientEmail || "admin-alerts@empresa.co.mz";
-    const subject = `ALERTA DE ESTOQUE CRÍTICO - ${productName}`;
+    
+    const defaultSubject = `[ALERTA] Estoque Crítico de Produtos - OST Vendas`;
+    const defaultBody = `Olá,\n\nEste é um alerta automático de que os seguintes produtos atingiram o nível de estoque mínimo definido:\n\n[LISTA_PRODUTOS]\n\nPor favor, providencie a reposição o quanto antes para evitar rupturas de estoque.\n\nAtenciosamente,\nSistema OST Vendas`;
+
+    const userSubject = settings.stockAlertEmailSubject || defaultSubject;
+    const userBody = settings.stockAlertEmailBody || defaultBody;
+
+    const productListText = `- ${productName} (Estoque Atual: ${currentStock}, Mínimo: ${threshold})`;
+    const companyName = settings.companyName || "OST Vendas";
+    const dateStr = new Date().toLocaleString("pt-MZ");
+
+    const parsedSubject = userSubject
+      .replace(/\[LISTA_PRODUTOS\]/g, productListText)
+      .replace(/\[NOME_EMPRESA\]/g, companyName)
+      .replace(/\[DATA\]/g, dateStr)
+      .replace(/\[EMAIL_DESTINO\]/g, recipientEmail);
+
+    const parsedBodyText = userBody
+      .replace(/\[LISTA_PRODUTOS\]/g, productListText)
+      .replace(/\[NOME_EMPRESA\]/g, companyName)
+      .replace(/\[DATA\]/g, dateStr)
+      .replace(/\[EMAIL_DESTINO\]/g, recipientEmail);
+
     const body = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; border: 1px solid #fee2e2; border-radius: 16px; background-color: #fff5f5;">
-        <h2 style="color: #dc2626; margin-top: 0;">⚠️ Alerta de Estoque Crítico</h2>
-        <p>O sistema <strong>OST Vendas</strong> detectou que um de seus produtos atingiu o nível de estoque mínimo configurado.</p>
+        <h2 style="color: #dc2626; margin-top: 0; font-size: 18px; display: flex; items-center: center; gap: 8px;">⚠️ Alerta de Estoque Crítico</h2>
+        <div style="font-size: 14px; color: #1f2937; line-height: 1.6; white-space: pre-wrap;">${parsedBodyText}</div>
         <hr style="border: none; border-top: 1px solid #fee2e2; margin: 20px 0;" />
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 8px 0; color: #4b5563; font-weight: bold;">Produto:</td>
-            <td style="padding: 8px 0; color: #1f2937; font-weight: bold;">${productName}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #4b5563;">Estoque Atual:</td>
-            <td style="padding: 8px 0; color: #dc2626; font-weight: bold;">${currentStock} unidades</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #4b5563;">Limite Mínimo:</td>
-            <td style="padding: 8px 0; color: #1f2937;">${threshold} unidades</td>
-          </tr>
-        </table>
-        <hr style="border: none; border-top: 1px solid #fee2e2; margin: 20px 0;" />
-        <p style="font-size: 13px; color: #4b5563;">Por favor, providencie o reabastecimento deste produto o quanto antes para evitar rupturas de estoque no POS.</p>
-        <p style="font-size: 11px; color: #9ca3af; margin-top: 25px; text-align: center;">Este é um e-mail automático enviado pelo sistema OST Vendas.</p>
+        <p style="font-size: 11px; color: #9ca3af; margin-top: 25px; text-align: center;">Este é um e-mail automático enviado pelo sistema ${companyName}.</p>
       </div>
     `;
+
+    const subject = parsedSubject;
 
     // 1. Add to Audit Logs
     handleAddAuditLog(
@@ -906,12 +1028,49 @@ export default function App() {
       return updated;
     });
 
+    const activeBranch = transaction.branchId || settings.activeBranchId || "central";
+    const localBatches = [...(settings.batches || [])];
+
     // 2. Dynamic stock levels deduction ("Abate de Stock")
     setProducts(prevProducts => {
       const updated = prevProducts.map(prod => {
         const cartItemMatch = transaction.items.find(item => item.productId === prod.id);
         if (cartItemMatch) {
           const updatedStock = Math.max(0, prod.stock - cartItemMatch.quantity);
+          
+          // Geographical Branch Stock deduction
+          const updatedBranchStocks = { ...(prod.branchStocks || {}) };
+          const currentBranchStock = updatedBranchStocks[activeBranch] !== undefined 
+            ? updatedBranchStocks[activeBranch] 
+            : prod.stock;
+          updatedBranchStocks[activeBranch] = Math.max(0, currentBranchStock - cartItemMatch.quantity);
+
+          // LIFO / FIFO Batch deduction
+          let remainingToDeduct = cartItemMatch.quantity;
+          const prodBatches = localBatches
+            .filter(b => b.productId === prod.id && b.quantity > 0)
+            .sort((a, b) => {
+              if (settings.inventoryStrategy === "LIFO") {
+                return new Date(b.receivedDate).getTime() - new Date(a.receivedDate).getTime();
+              } else {
+                return new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime();
+              }
+            });
+
+          for (const pb of prodBatches) {
+            if (remainingToDeduct <= 0) break;
+            const matchIdx = localBatches.findIndex(b => b.id === pb.id);
+            if (matchIdx > -1) {
+              const batch = localBatches[matchIdx];
+              const deduct = Math.min(batch.quantity, remainingToDeduct);
+              remainingToDeduct -= deduct;
+              localBatches[matchIdx] = {
+                ...batch,
+                quantity: batch.quantity - deduct
+              };
+            }
+          }
+
           const threshold = settings.smsStockThreshold !== undefined ? settings.smsStockThreshold : 5;
           
           if (settings.smsAlertsEnabled && updatedStock <= threshold && prod.stock > threshold) {
@@ -924,7 +1083,8 @@ export default function App() {
 
           return {
             ...prod,
-            stock: updatedStock
+            stock: updatedStock,
+            branchStocks: updatedBranchStocks
           };
         }
         return prod;
@@ -932,6 +1092,9 @@ export default function App() {
       syncTable("products", updated);
       return updated;
     });
+
+    // Save updated batches to system settings
+    handleUpdateSettings({ batches: localBatches });
 
     // 3. Update customer loyalty points accumulated
     if (transaction.customerId && transaction.customerId !== "WALK_IN") {
@@ -959,7 +1122,7 @@ export default function App() {
     handleAddAuditLog(
       "Completar Transação de POS",
       "VENDAS",
-      `Fatura ${transaction.invoiceNumber} processada. Cliente: ${transaction.customerName}, Método: ${transaction.paymentMethod}. Total Pago: ${transaction.grandTotal} MT. Abate de Stock concluído.`
+      `Fatura ${transaction.invoiceNumber} processada na filial ${activeBranch}. Cliente: ${transaction.customerName}, Método: ${transaction.paymentMethod}. Total Pago: ${transaction.grandTotal} MT. Abate de Stock concluído.`
     );
   };
 
@@ -1317,6 +1480,7 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
                   currency={currency}
                   settings={settings}
                   onShowToast={showToast}
+                  onUpdateSettings={handleUpdateSettings}
                 />
               )}
 
@@ -1490,6 +1654,7 @@ Com base no histórico fornecido de vendas para o seu negócio de **${settings.c
                   onChangeColorTheme={handleThemeChange}
                   onExportLocalDB={handleExportLocalDB}
                   onImportLocalDB={handleImportLocalDB}
+                  onTriggerLocalBackup={handleTriggerLocalBackup}
                 />
               )}
 

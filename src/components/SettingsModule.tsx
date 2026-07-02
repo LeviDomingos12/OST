@@ -50,6 +50,7 @@ interface SettingsModuleProps {
   onChangeColorTheme: (themeId: string) => void;
   onExportLocalDB?: () => void;
   onImportLocalDB?: (jsonData: any) => Promise<boolean> | boolean;
+  onTriggerLocalBackup?: (type: "manual" | "automatic") => Promise<boolean> | boolean;
 }
 
 export default function SettingsModule({
@@ -63,7 +64,8 @@ export default function SettingsModule({
   activeColorTheme,
   onChangeColorTheme,
   onExportLocalDB,
-  onImportLocalDB
+  onImportLocalDB,
+  onTriggerLocalBackup
 }: SettingsModuleProps) {
   const canEdit = currentRole === "ADMIN";
   
@@ -111,6 +113,15 @@ export default function SettingsModule({
   const [smtpPassword, setSmtpPassword] = useState(settings.smtpPassword || "");
   const [smtpSecure, setSmtpSecure] = useState(settings.smtpSecure || false);
   const [emailStockAlertsEnabled, setEmailStockAlertsEnabled] = useState(settings.emailStockAlertsEnabled || false);
+  const [stockAlertEmailSubject, setStockAlertEmailSubject] = useState(
+    settings.stockAlertEmailSubject || "[ALERTA] Estoque Crítico de Produtos - OST Vendas"
+  );
+  const [stockAlertEmailBody, setStockAlertEmailBody] = useState(
+    settings.stockAlertEmailBody || `Olá,\n\nEste é um alerta automático de que os seguintes produtos atingiram o nível de estoque mínimo definido:\n\n[LISTA_PRODUTOS]\n\nPor favor, providencie a reposição o quanto antes para evitar rupturas de estoque.\n\nAtenciosamente,\nSistema OST Vendas`
+  );
+  const [isSmtpVerified, setIsSmtpVerified] = useState(settings.isSmtpVerified || false);
+  const [testRecipient, setTestRecipient] = useState(settings.alertsRecipientEmail || settings.reportRecipientEmail || "");
+  const [isTestingSmtp, setIsTestingSmtp] = useState(false);
   
   // Custom states for dispatcher details
   const [reportFormat, setReportFormat] = useState<"PDF" | "CSV" | "AMBOS">("PDF");
@@ -359,8 +370,140 @@ export default function SettingsModule({
 
   // Simulation states
   const [isSimulatingMail, setIsSimulatingMail] = useState(false);
-  const [isTestingSmtp, setIsTestingSmtp] = useState(false);
   const [simulationLogs, setSimulationLogs] = useState<string[]>([]);
+
+  // NEW Backup and Recovery tab states
+  const [activeSubTab, setActiveSubTab] = useState<"geral" | "backup">("geral");
+  const [localBackupsLog, setLocalBackupsLog] = useState<any[]>([]);
+
+  const loadLocalBackupsLog = () => {
+    try {
+      const logsStr = localStorage.getItem("erp_local_backups_log");
+      if (logsStr) {
+        setLocalBackupsLog(JSON.parse(logsStr));
+      } else {
+        setLocalBackupsLog([]);
+      }
+    } catch (e) {
+      console.error("Erro ao ler logs de backup:", e);
+    }
+  };
+
+  useEffect(() => {
+    loadLocalBackupsLog();
+  }, []);
+
+  const handleCreateManualBackup = async () => {
+    if (!canEdit) {
+      if (onShowToast) {
+        onShowToast("Apenas administradores podem iniciar um backup manual.", "error", "Permissão Negada");
+      }
+      return;
+    }
+    
+    if (onTriggerLocalBackup) {
+      const success = await onTriggerLocalBackup("manual");
+      if (success) {
+        if (onShowToast) {
+          onShowToast("Cópia de segurança manual criada localmente com sucesso!", "success", "Backup Concluído");
+        }
+        loadLocalBackupsLog();
+      } else {
+        if (onShowToast) {
+          onShowToast("Erro ao processar cópia de segurança manual.", "error", "Falha de Backup");
+        }
+      }
+    }
+  };
+
+  const handleRestoreFromSlot = async (slotId: string) => {
+    if (currentRole !== "ADMIN") {
+      if (onShowToast) {
+        onShowToast("Apenas utilizadores com privilégios de Administrador (ADMIN) podem restaurar o banco de dados.", "error", "Permissão Negada");
+      }
+      return;
+    }
+
+    if (window.confirm("Deseja realmente restaurar os dados a partir deste ponto de backup local? Os dados atuais serão substituídos.")) {
+      try {
+        const dataStr = localStorage.getItem(`erp_backup_slot_${slotId}`);
+        if (dataStr) {
+          const parsed = JSON.parse(dataStr);
+          if (onImportLocalDB && parsed.data) {
+            const success = await onImportLocalDB(parsed.data);
+            if (success) {
+              if (onShowToast) {
+                onShowToast("Banco de dados local restaurado com sucesso!", "success", "Redundância Restaurada");
+              }
+            }
+          } else {
+            if (onShowToast) {
+              onShowToast("Os dados salvos nesse backup parecem inválidos ou incompletos.", "warning", "Dados Inválidos");
+            }
+          }
+        } else {
+          if (onShowToast) {
+            onShowToast("Não foi possível encontrar os dados desse backup. Ele pode ter sido limpo pelo navegador.", "error", "Ficheiro Não Encontrado");
+          }
+        }
+      } catch (err) {
+        if (onShowToast) {
+          onShowToast("Erro ao ler dados de backup.", "error", "Erro de Restauro");
+        }
+      }
+    }
+  };
+
+  const handleDownloadSlotBackup = (slotId: string, dateStr: string) => {
+    try {
+      const dataStr = localStorage.getItem(`erp_backup_slot_${slotId}`);
+      if (dataStr) {
+        const blob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `OST_Vendas_Backup_Local_${dateStr.split("T")[0]}_${slotId}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        if (onShowToast) {
+          onShowToast("Download do backup JSON concluído!", "success", "Exportação");
+        }
+      } else {
+        if (onShowToast) {
+          onShowToast("Não foi possível encontrar os dados do backup para descarregar.", "error", "Erro de Download");
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSaveBackupInterval = (frequency: string) => {
+    if (!canEdit) {
+      if (onShowToast) {
+        onShowToast("Apenas administradores podem alterar o intervalo de backup.", "error", "Acesso Negado");
+      }
+      return;
+    }
+
+    setBackupFrequency(frequency);
+    onUpdateSettings({
+      backupFrequency: frequency
+    });
+
+    if (onShowToast) {
+      onShowToast(`Intervalo de exportação automática atualizado para: ${frequency === "daily" ? "Diário" : frequency === "weekly" ? "Semanal" : frequency === "monthly" ? "Mensal" : "A cada 12 Horas"}`, "success", "Intervalo Salvo");
+    }
+
+    onAddAuditLog(
+      "Alterar Intervalo de Backup",
+      "CONFIGURAÇÕES",
+      `Alterado intervalo de backup automático local para: ${frequency}.`
+    );
+  };
 
   // Automatic Cloud Backup Scheduler States
   const [cloudBackupEnabled, setCloudBackupEnabled] = useState(settings.cloudBackupEnabled ?? true);
@@ -801,6 +944,10 @@ export default function SettingsModule({
     setSmtpPassword(settings.smtpPassword || "");
     setSmtpSecure(settings.smtpSecure || false);
     setEmailStockAlertsEnabled(settings.emailStockAlertsEnabled || false);
+    setStockAlertEmailSubject(settings.stockAlertEmailSubject || "[ALERTA] Estoque Crítico de Produtos - OST Vendas");
+    setStockAlertEmailBody(settings.stockAlertEmailBody || `Olá,\n\nEste é um alerta automático de que os seguintes produtos atingiram o nível de estoque mínimo definido:\n\n[LISTA_PRODUTOS]\n\nPor favor, providencie a reposição o quanto antes para evitar rupturas de estoque.\n\nAtenciosamente,\nSistema OST Vendas`);
+    setIsSmtpVerified(settings.isSmtpVerified || false);
+    setTestRecipient(settings.alertsRecipientEmail || settings.reportRecipientEmail || testRecipient || "");
     
     if (settings.cloudBackupEnabled !== undefined) setCloudBackupEnabled(settings.cloudBackupEnabled);
     if (settings.backupFrequency) setBackupFrequency(settings.backupFrequency);
@@ -858,15 +1005,24 @@ export default function SettingsModule({
     if (onShowToast) onShowToast("Conta Gmail desvinculada.", "info");
   };
   
-  const testConnection = async () => {
+  const handleDedicatedSmtpTest = async () => {
     if (!smtpHost || !smtpPort) {
-      if (onShowToast) onShowToast("O Servidor Host e a Porta do SMTP são obrigatórios para realizar o teste.", "warning", "Campos em Falta");
+      if (onShowToast) {
+        onShowToast("O Servidor Host e a Porta do SMTP são obrigatórios para realizar o teste.", "warning", "Campos em Falta");
+      }
       return;
     }
 
+    const recipient = testRecipient || reportRecipientEmail || (activeUser?.email) || "test@ostvendas.com";
+    if (!recipient || !recipient.includes("@")) {
+      if (onShowToast) {
+        onShowToast("Insira um endereço de e-mail de destinatário válido para o teste.", "warning", "E-mail Inválido");
+      }
+      return;
+    }
+
+    setIsTestingSmtp(true);
     try {
-      setIsTestingSmtp(true);
-      const testRecipient = reportRecipientEmail || (activeUser?.email) || "test@ostvendas.com";
       const response = await fetch("/api/email/test-smtp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -876,28 +1032,92 @@ export default function SettingsModule({
           smtpUser,
           smtpPassword,
           smtpSecure,
-          recipient: testRecipient,
-          subject: "Teste de SMTP - OST Vendas",
-          body: "Configuração de SMTP validada com sucesso via formulário de configurações."
+          recipient: recipient,
+          subject: "Teste de Conexão SMTP - OST Vendas",
+          body: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+              <h2 style="color: #f97316; text-align: center; margin-top: 0;">Teste de SMTP Concluído com Sucesso!</h2>
+              <p style="color: #334155; font-size: 14px; line-height: 1.6;">Se recebeu esta mensagem, significa que as credenciais do seu servidor SMTP dedicado foram verificadas corretamente e o sistema de vendas está autorizado a enviar e-mails.</p>
+              <div style="background-color: #f8fafc; padding: 15px; border-radius: 12px; margin: 20px 0; border: 1px solid #f1f5f9;">
+                <p style="margin: 0; font-size: 12px; color: #64748b; font-family: monospace;"><b>Host:</b> ${smtpHost}</p>
+                <p style="margin: 4px 0 0 0; font-size: 12px; color: #64748b; font-family: monospace;"><b>Porta:</b> ${smtpPort}</p>
+                <p style="margin: 4px 0 0 0; font-size: 12px; color: #64748b; font-family: monospace;"><b>Utilizador:</b> ${smtpUser || "Sem autenticação"}</p>
+                <p style="margin: 4px 0 0 0; font-size: 12px; color: #64748b; font-family: monospace;"><b>Segurança:</b> ${smtpSecure ? "SSL/TLS Ativo" : "Inativo"}</p>
+              </div>
+              <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-bottom: 0;">Este é um e-mail automático enviado pelo painel de configurações do OST Vendas.</p>
+            </div>
+          `
         })
       });
 
       const data = await response.json();
       if (response.ok) {
-        if (onShowToast) onShowToast(data.message || "Conexão SMTP validada com sucesso!", "success", "Conexão Estabelecida");
+        setIsSmtpVerified(true);
+        if (onShowToast) {
+          onShowToast(data.message || "Conexão SMTP validada com sucesso e e-mail enviado!", "success", "Conexão Estabelecida");
+        }
+        onUpdateSettings({
+          smtpHost,
+          smtpPort: Number(smtpPort),
+          smtpUser,
+          smtpPassword,
+          smtpSecure,
+          isSmtpVerified: true
+        });
         onAddAuditLog(
           "Teste de SMTP",
           "CONFIGURAÇÕES",
-          `Conexão SMTP testada com sucesso para o host ${smtpHost}:${smtpPort}.`
+          `Conexão SMTP testada com sucesso para o host ${smtpHost}:${smtpPort}. Destinatário: ${recipient}. Estado: Verificado.`
         );
       } else {
-        throw new Error(data.error || "Servidor SMTP recusou a ligação.");
+        setIsSmtpVerified(false);
+        if (onShowToast) {
+          onShowToast(data.error || "Servidor SMTP recusou a ligação de teste.", "error", "Falha de Conexão");
+        }
+        onUpdateSettings({
+          isSmtpVerified: false
+        });
       }
     } catch (err: any) {
-      if (onShowToast) onShowToast(err.message || "Erro desconhecido ao testar conexão SMTP.", "error", "Falha de Conexão");
+      setIsSmtpVerified(false);
+      if (onShowToast) {
+        onShowToast(err.message || "Erro desconhecido ao ligar ao SMTP.", "error", "Falha de Ligação");
+      }
+      onUpdateSettings({
+        isSmtpVerified: false
+      });
     } finally {
       setIsTestingSmtp(false);
     }
+  };
+
+  const handleSaveDedicatedSmtp = () => {
+    if (!smtpHost || !smtpPort) {
+      if (onShowToast) {
+        onShowToast("O Servidor Host e a Porta do SMTP são obrigatórios para gravar.", "warning", "Campos em Falta");
+      }
+      return;
+    }
+
+    onUpdateSettings({
+      smtpHost,
+      smtpPort: Number(smtpPort),
+      smtpUser,
+      smtpPassword,
+      smtpSecure,
+      isSmtpVerified
+    });
+
+    setFeedbackMsg("Configuração do Servidor SMTP Dedicado gravada com sucesso!");
+    onAddAuditLog(
+      "Salvar Configuração SMTP",
+      "CONFIGURAÇÕES",
+      `Credenciais SMTP gravadas para ${smtpHost}:${smtpPort} (Utilizador: ${smtpUser || "Nenhum"}). Verificado: ${isSmtpVerified ? "Sim" : "Não"}.`
+    );
+    if (onShowToast) {
+      onShowToast("As configurações do servidor SMTP dedicado foram gravadas!", "success", "SMTP Gravado");
+    }
+    setTimeout(() => setFeedbackMsg(""), 2200);
   };
 
   const handleSaveEmailConfig = (e: React.FormEvent) => {
@@ -1219,9 +1439,18 @@ export default function SettingsModule({
       return;
     }
 
+    if (emailStockAlertsEnabled && smtpEnabled && !isSmtpVerified) {
+      if (onShowToast) {
+        onShowToast("O servidor SMTP precisa ser verificado com sucesso ('Testar Conexão') no painel dedicado antes de poder ativar os alertas automáticos.", "error", "SMTP Não Verificado");
+      }
+      return;
+    }
+
     onUpdateSettings({
       alertsRecipientEmail,
-      emailStockAlertsEnabled
+      emailStockAlertsEnabled,
+      stockAlertEmailSubject,
+      stockAlertEmailBody
     });
 
     setFeedbackMsg("Configurações de Notificações salvas com sucesso!");
@@ -1518,8 +1747,38 @@ export default function SettingsModule({
         </div>
       )}
 
-      {/* 10-THEME COLOR PALETTE SELECTION FOR EACH OPERATOR */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+      {/* Settings Sub-Tabs Navigator */}
+      <div className="flex border-b border-slate-200 gap-1">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("geral")}
+          className={`px-5 py-3 font-bold text-xs transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
+            activeSubTab === "geral"
+              ? "border-orange-500 text-orange-600 font-extrabold"
+              : "border-transparent text-slate-500 hover:text-slate-850 hover:border-slate-300"
+          }`}
+        >
+          <Settings className="w-4 h-4" />
+          Configurações Gerais
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("backup")}
+          className={`px-5 py-3 font-bold text-xs transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
+            activeSubTab === "backup"
+              ? "border-orange-500 text-orange-600 font-extrabold"
+              : "border-transparent text-slate-500 hover:text-slate-850 hover:border-slate-300"
+          }`}
+        >
+          <Database className="w-4 h-4" />
+          Backup e Recuperação
+        </button>
+      </div>
+
+      {activeSubTab === "geral" ? (
+        <div className="space-y-6 animate-in fade-in-50 duration-150">
+          {/* 10-THEME COLOR PALETTE SELECTION FOR EACH OPERATOR */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
         <div className="flex items-center gap-2.5 text-orange-600">
           <Palette className="w-5 h-5 text-orange-500" />
           <div>
@@ -1889,7 +2148,19 @@ export default function SettingsModule({
                     type="checkbox"
                     disabled={!canEdit}
                     checked={emailStockAlertsEnabled}
-                    onChange={(e) => setEmailStockAlertsEnabled(e.target.checked)}
+                    onChange={(e) => {
+                      if (e.target.checked && smtpEnabled && !isSmtpVerified) {
+                        if (onShowToast) {
+                          onShowToast(
+                            "O servidor SMTP precisa ser verificado com sucesso ('Testar Conexão') no painel dedicado antes de poder ativar os alertas automáticos.",
+                            "warning",
+                            "SMTP Não Verificado"
+                          );
+                        }
+                        return;
+                      }
+                      setEmailStockAlertsEnabled(e.target.checked);
+                    }}
                     className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-4 h-4 cursor-pointer"
                   />
                   <span>Alertas de Estoque Baixo por E-mail</span>
@@ -1898,6 +2169,62 @@ export default function SettingsModule({
                   Quando ativo, envia avisos automáticos via e-mail para o destinatário acima sempre que o estoque de algum item atingir um nível crítico. Requer SMTP ou Gmail API configurado.
                 </p>
               </div>
+
+              {/* Custom Email Template Editor for Stock Alerts */}
+              {emailStockAlertsEnabled && (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4 animate-in fade-in duration-200">
+                  <div className="flex items-center gap-1.5 text-orange-600 font-bold text-xs uppercase tracking-wider border-b pb-1.5 border-slate-200">
+                    <Mail className="w-4 h-4 text-orange-500" />
+                    <span>Modelo de E-mail de Alerta</span>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block">Assunto do E-mail</label>
+                    <input
+                      type="text"
+                      disabled={!canEdit}
+                      value={stockAlertEmailSubject}
+                      onChange={(e) => setStockAlertEmailSubject(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none text-slate-850 disabled:opacity-75 text-xs focus:border-orange-400 focus:ring-1 focus:ring-orange-400"
+                      placeholder="Ex: [ALERTA] Estoque Crítico de Produtos"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block">Corpo do E-mail (Texto Simples)</label>
+                    <textarea
+                      rows={6}
+                      disabled={!canEdit}
+                      value={stockAlertEmailBody}
+                      onChange={(e) => setStockAlertEmailBody(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono text-[11px] text-slate-850 disabled:opacity-75 outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400 leading-relaxed resize-y"
+                      placeholder="Escreva a mensagem do e-mail..."
+                    />
+                  </div>
+
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 space-y-1.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Tags Dinâmicas Disponíveis:</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-slate-600">
+                      <div className="flex items-center gap-1">
+                        <code className="bg-slate-100 px-1 py-0.5 rounded font-bold font-mono text-orange-600">[LISTA_PRODUTOS]</code>
+                        <span>Lista de produtos baixos</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <code className="bg-slate-100 px-1 py-0.5 rounded font-bold font-mono text-orange-600">[NOME_EMPRESA]</code>
+                        <span>Nome do estabelecimento</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <code className="bg-slate-100 px-1 py-0.5 rounded font-bold font-mono text-orange-600">[DATA]</code>
+                        <span>Data e hora do envio</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <code className="bg-slate-100 px-1 py-0.5 rounded font-bold font-mono text-orange-600">[EMAIL_DESTINO]</code>
+                        <span>E-mail destinatário</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {canEdit ? (
                 <button
@@ -2181,6 +2508,63 @@ export default function SettingsModule({
                     </span>
                   )}
                 </div>
+              </div>
+
+              {/* 24-Hour LocalStorage Automatic Backup Status */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800/80 space-y-2 text-[11px] mt-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-medium">Redundância Automática Local:</span>
+                  <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold text-[9.5px]">
+                    Cada 24 Horas (Ativo)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-medium">Último Auto-Backup:</span>
+                  <span className="font-mono text-slate-200">
+                    {localStorage.getItem("erp_last_auto_backup_time")
+                      ? new Date(localStorage.getItem("erp_last_auto_backup_time")!).toLocaleString("pt-MZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                      : "Pendente"
+                    }
+                  </span>
+                </div>
+                
+                {localStorage.getItem("erp_auto_backup_local_db") && (
+                  <div className="pt-2 border-t border-slate-800/60 flex justify-between items-center gap-2">
+                    <span className="text-[10px] text-slate-400 font-medium">Redundância salva no navegador</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (currentRole !== "ADMIN") {
+                          if (onShowToast) {
+                            onShowToast("Apenas utilizadores com privilégios de Administrador (ADMIN) podem restaurar o banco de dados.", "error", "Permissão Negada");
+                          }
+                          return;
+                        }
+                        if (window.confirm("Deseja realmente restaurar os dados a partir do último backup redundante de 24h armazenado no LocalStorage? Os dados atuais serão substituídos.")) {
+                          try {
+                            const dataStr = localStorage.getItem("erp_auto_backup_local_db");
+                            if (dataStr) {
+                              const parsed = JSON.parse(dataStr);
+                              if (onImportLocalDB && parsed.data) {
+                                const success = await onImportLocalDB(parsed.data);
+                                if (success && onShowToast) {
+                                  onShowToast("Banco de dados local restaurado com sucesso a partir do LocalStorage!", "success", "Redundância Restaurada");
+                                }
+                              }
+                            }
+                          } catch (err) {
+                            if (onShowToast) {
+                              onShowToast("Erro ao ler dados de backup do LocalStorage.", "error", "Erro de Restauro");
+                            }
+                          }
+                        }
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-1 px-2.5 rounded text-[10px] transition cursor-pointer"
+                    >
+                      Restaurar Redundância
+                    </button>
+                  </div>
+                )}
               </div>
               
               <div className="flex gap-2 text-xs pt-1">
@@ -2756,6 +3140,184 @@ export default function SettingsModule({
 
       </div>
 
+      {/* EXCLUSIVE PANEL: Dedicated SMTP Server Configuration */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4 border-slate-100">
+          <div className="flex items-center gap-2.5 text-orange-600">
+            <Server className="w-5 h-5 shrink-0" />
+            <div>
+              <h3 className="font-bold text-slate-850 text-sm">Configuração de Servidor SMTP Dedicado</h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">Gerencie as credenciais do seu servidor de saída para envio de e-mails de forma independente e segura.</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isSmtpVerified ? (
+              <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full font-bold text-[10px] flex items-center gap-1">
+                <CheckCircle className="w-3.5 h-3.5" />
+                Conexão Verificada
+              </span>
+            ) : (
+              <span className="bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1 rounded-full font-bold text-[10px] flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Não Verificado
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-slate-800 text-xs">
+          {/* SMTP Credentials */}
+          <div className="lg:col-span-2 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="sm:col-span-2 space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Servidor Host (ex: smtp.gmail.com)</label>
+                <input
+                  type="text"
+                  required
+                  disabled={!canEdit}
+                  value={smtpHost}
+                  onChange={(e) => {
+                    setSmtpHost(e.target.value);
+                    setIsSmtpVerified(false);
+                  }}
+                  className="w-full bg-slate-50 disabled:opacity-75 border border-slate-200 rounded-xl p-2.5 font-semibold outline-none focus:border-orange-400 text-xs transition"
+                  placeholder="smtp.empresa.com"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Porta SMTP</label>
+                <input
+                  type="number"
+                  required
+                  disabled={!canEdit}
+                  value={smtpPort}
+                  onChange={(e) => {
+                    setSmtpPort(Number(e.target.value));
+                    setIsSmtpVerified(false);
+                  }}
+                  className="w-full bg-slate-50 disabled:opacity-75 border border-slate-200 rounded-xl p-2.5 font-semibold outline-none focus:border-orange-400 text-xs transition"
+                  placeholder="587"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Usuário / E-mail</label>
+                <input
+                  type="text"
+                  required
+                  disabled={!canEdit}
+                  value={smtpUser}
+                  onChange={(e) => {
+                    setSmtpUser(e.target.value);
+                    setIsSmtpVerified(false);
+                  }}
+                  className="w-full bg-slate-50 disabled:opacity-75 border border-slate-200 rounded-xl p-2.5 font-semibold outline-none focus:border-orange-400 text-xs transition"
+                  placeholder="exemplo@provedor.com"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Senha SMTP</label>
+                <input
+                  type="password"
+                  required
+                  disabled={!canEdit}
+                  value={smtpPassword}
+                  onChange={(e) => {
+                    setSmtpPassword(e.target.value);
+                    setIsSmtpVerified(false);
+                  }}
+                  className="w-full bg-slate-50 disabled:opacity-75 border border-slate-200 rounded-xl p-2.5 font-semibold outline-none focus:border-orange-400 text-xs transition"
+                  placeholder="••••••••••••"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="smtpSecureDedicated"
+                disabled={!canEdit}
+                checked={smtpSecure}
+                onChange={(e) => {
+                  setSmtpSecure(e.target.checked);
+                  setIsSmtpVerified(false);
+                }}
+                className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-4 h-4 cursor-pointer"
+              />
+              <label htmlFor="smtpSecureDedicated" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                Utilizar conexão segura SSL/TLS (Necessário para porta 465)
+              </label>
+            </div>
+          </div>
+
+          {/* Verification & Test Panel */}
+          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150 space-y-4">
+            <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-1.5 border-b pb-2 border-slate-200">
+              <Check className="w-4 h-4 text-orange-500" />
+              Verificação & Teste
+            </h4>
+
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Destinatário do E-mail de Teste</label>
+                <input
+                  type="email"
+                  required
+                  disabled={!canEdit}
+                  value={testRecipient}
+                  onChange={(e) => setTestRecipient(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-xl p-2 font-semibold outline-none focus:border-orange-400 text-xs"
+                  placeholder="destino-teste@empresa.com"
+                />
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  disabled={isTestingSmtp || !canEdit}
+                  onClick={handleDedicatedSmtpTest}
+                  className="flex-1 py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shadow shadow-slate-900/10"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-amber-400 ${isTestingSmtp ? "animate-spin" : ""}`} />
+                  {isTestingSmtp ? "A testar..." : "Testar Conexão"}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!canEdit}
+                  onClick={handleSaveDedicatedSmtp}
+                  className="flex-1 py-2 px-3 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs transition cursor-pointer shadow shadow-orange-500/10 flex items-center justify-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  Salvar Servidor
+                </button>
+              </div>
+
+              {isSmtpVerified ? (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 text-[11px] rounded-xl flex items-start gap-2 animate-in fade-in duration-150">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block">Conexão Ativa!</span>
+                    As credenciais estão corretas. Pode agora ativar as notificações e relatórios automatizados por e-mail com segurança.
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-700 text-[11px] rounded-xl flex items-start gap-2 animate-in fade-in duration-150">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block">Necessita Validação</span>
+                    Por favor teste a conexão para garantir o envio correto de alertas de estoque e relatórios periódicos.
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* NEW: Automated Email Report Dispatch Configuration Section */}
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4 border-slate-100">
@@ -2851,81 +3413,35 @@ export default function SettingsModule({
                 </div>
               </div>
             ) : (
-              <div className="space-y-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200 animate-in fade-in-50 duration-150">
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="col-span-2 space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase">Servidor Host</label>
-                    <input
-                      type="text"
-                      required
-                      value={smtpHost}
-                      onChange={(e) => setSmtpHost(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-slate-350 text-[11px]"
-                      placeholder="smtp.mailtrap.io"
-                    />
+              <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200 animate-in fade-in-50 duration-150 text-[11px] text-slate-600 leading-normal">
+                <p>
+                  O sistema utilizará o servidor SMTP dedicado configurado no painel dedicado acima para disparar os relatórios programados.
+                </p>
+                <div className="bg-white p-2.5 rounded-lg border border-slate-150 space-y-1 font-medium">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Servidor:</span>
+                    <span className="font-semibold text-slate-800">{smtpHost || "Não Configurado"}:{smtpPort || "Nenhum"}</span>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase">Porta</label>
-                    <input
-                      type="number"
-                      required
-                      value={smtpPort}
-                      onChange={(e) => setSmtpPort(Number(e.target.value))}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-slate-350 text-[11px]"
-                      placeholder="587"
-                    />
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Usuário:</span>
+                    <span className="font-semibold text-slate-800 truncate max-w-[120px]">{smtpUser || "Nenhum"}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-1.5 border-t border-slate-100">
+                    <span className="text-slate-400">Estado SMTP:</span>
+                    {isSmtpVerified ? (
+                      <span className="text-emerald-600 font-bold flex items-center gap-1 text-[10px]">
+                        ● Verificado
+                      </span>
+                    ) : (
+                      <span className="text-amber-600 font-bold flex items-center gap-1 text-[10px]">
+                        ● Não Verificado
+                      </span>
+                    )}
                   </div>
                 </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Usuário / E-mail</label>
-                  <input
-                    type="text"
-                    required
-                    value={smtpUser}
-                    onChange={(e) => setSmtpUser(e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-slate-350 text-[11px]"
-                    placeholder="exemplo@provedor.com"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Senha</label>
-                  <input
-                    type="password"
-                    required
-                    value={smtpPassword}
-                    onChange={(e) => setSmtpPassword(e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-lg p-2 font-semibold outline-none focus:border-slate-350 text-[11px]"
-                    placeholder="••••••••••••"
-                  />
-                </div>
-
-                <div className="pt-1 flex items-center justify-between gap-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      id="smtpSecure"
-                      checked={smtpSecure}
-                      onChange={(e) => setSmtpSecure(e.target.checked)}
-                      className="rounded border-slate-300 text-orange-500 focus:ring-orange-500 w-3.5 h-3.5 cursor-pointer"
-                    />
-                    <label htmlFor="smtpSecure" className="text-[10.5px] font-semibold text-slate-600 cursor-pointer select-none">
-                      Utilizar SSL/TLS
-                    </label>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={isTestingSmtp}
-                    onClick={testConnection}
-                    className="py-1 px-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg text-[10px] transition cursor-pointer disabled:opacity-50 flex items-center gap-1 shrink-0"
-                    title="Testar Conexão SMTP com envio de e-mail de teste"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${isTestingSmtp ? "animate-spin" : ""}`} />
-                    {isTestingSmtp ? "Testando..." : "Testar Conexão"}
-                  </button>
-                </div>
+                <p className="text-[10px] text-slate-400 italic">
+                  Para alterar as credenciais ou testar a ligação, utilize o painel exclusivo do Servidor SMTP Dedicado acima.
+                </p>
               </div>
             )}
           </div>
@@ -3826,6 +4342,217 @@ export default function SettingsModule({
           </div>
         </form>
       </div>
+      </div>
+      ) : (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Header Card */}
+          <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 shadow-lg space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="bg-orange-500 text-slate-950 p-2.5 rounded-xl shrink-0">
+                <Database className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-white text-base">Cópia de Segurança & Recuperação de Dados</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Defina as suas preferências de salvaguarda de dados operacionais e restaure redundâncias passadas.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs text-slate-800">
+            {/* Left Config Panel */}
+            <div className="lg:col-span-5 space-y-6">
+              
+              {/* Card 1: Backup Interval Config */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-2 text-orange-600">
+                  <Clock className="w-4.5 h-4.5" />
+                  <h4 className="font-bold text-slate-800 text-sm">Intervalo do Backup Automático</h4>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-normal">
+                  Selecione com que frequência o sistema deve criar automaticamente um ponto de redundância do banco de dados no armazenamento local do navegador.
+                </p>
+
+                <div className="space-y-2 pt-1">
+                  {[
+                    { id: "12h", name: "A cada 12 Horas", desc: "Altamente recomendado para vendas frequentes." },
+                    { id: "daily", name: "Diário (Cada 24 horas)", desc: "Recomendado para uso geral diário." },
+                    { id: "weekly", name: "Semanal (Cada 7 dias)", desc: "Adequado para pequenos estabelecimentos." },
+                    { id: "monthly", name: "Mensal (Cada 30 dias)", desc: "Salvaguarda básica de longo prazo." }
+                  ].map((opt) => {
+                    const isSelected = backupFrequency === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => handleSaveBackupInterval(opt.id)}
+                        className={`w-full p-3 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
+                          isSelected
+                            ? "border-orange-500 bg-orange-500/5 shadow-sm"
+                            : "border-slate-200 hover:bg-slate-50 hover:border-slate-300"
+                        }`}
+                      >
+                        <div>
+                          <p className={`font-bold text-xs ${isSelected ? "text-orange-700" : "text-slate-800"}`}>
+                            {opt.name}
+                          </p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">{opt.desc}</p>
+                        </div>
+                        {isSelected && (
+                          <div className="w-4 h-4 rounded-full bg-orange-500 text-white flex items-center justify-center text-[10px] font-bold">
+                            <Check className="w-3 h-3 stroke-[3]" />
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Card 2: Manual Trigger */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-2 text-orange-600">
+                  <Shield className="w-4.5 h-4.5" />
+                  <h4 className="font-bold text-slate-800 text-sm">Backup Local Instantâneo</h4>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-normal">
+                  Gere e salve imediatamente uma cópia de segurança completa do seu banco de dados na lista de pontos de restauro local.
+                </p>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    disabled={!canEdit}
+                    onClick={handleCreateManualBackup}
+                    className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 shadow shadow-slate-900/10"
+                  >
+                    <RefreshCw className="w-4 h-4 text-orange-400" />
+                    Fazer Backup Local Agora
+                  </button>
+                </div>
+
+                <div className="border-t border-slate-100 pt-3 flex items-center justify-between text-[11px]">
+                  <span className="text-slate-400 font-medium">Último Auto-Backup:</span>
+                  <span className="font-mono text-slate-700 font-bold">
+                    {localStorage.getItem("erp_last_auto_backup_time")
+                      ? new Date(localStorage.getItem("erp_last_auto_backup_time")!).toLocaleString("pt-MZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                      : "Nunca realizado"
+                    }
+                  </span>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Right List Panel */}
+            <div className="lg:col-span-7 space-y-6">
+              
+              {/* Card: Backups Log */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4 flex flex-col h-full min-h-[400px]">
+                <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+                  <div className="flex items-center gap-2 text-orange-600">
+                    <Database className="w-4.5 h-4.5" />
+                    <h4 className="font-bold text-slate-800 text-sm">Histórico de Backups Locais (Últimos 5)</h4>
+                  </div>
+                  <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold text-[10px]">
+                    {localBackupsLog.length} de 5 Slots
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-500 leading-normal">
+                  Estes são os últimos 5 backups gravados localmente neste navegador. Pode descarregar cada ponto de restauro individualmente ou restaurar o banco de dados diretamente a partir deles.
+                </p>
+
+                {localBackupsLog.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200 min-h-[250px]">
+                    <div className="bg-slate-100 text-slate-400 p-4 rounded-2xl mb-3">
+                      <Database className="w-8 h-8 stroke-[1.5]" />
+                    </div>
+                    <h5 className="font-bold text-slate-700 text-xs">Nenhum backup local registado</h5>
+                    <p className="text-[11px] text-slate-400 max-w-[280px] mt-1">
+                      Os backups automáticos e manuais serão listados aqui assim que forem gerados pelo sistema.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 flex-1 overflow-y-auto">
+                    {localBackupsLog.map((log: any) => (
+                      <div key={log.id} className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-slate-300 transition">
+                        <div className="flex items-start gap-2.5">
+                          <div className={`p-2 rounded-lg shrink-0 mt-0.5 ${
+                            log.type === "Manual" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                          }`}>
+                            <Database className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-800">
+                                {new Date(log.date).toLocaleString("pt-MZ", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit"
+                                })}
+                              </span>
+                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                log.type === "Manual"
+                                  ? "bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                                  : "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                              }`}>
+                                {log.type}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                              <span>Freq: <b>{log.frequency}</b></span>
+                              <span>•</span>
+                              <span>Tamanho: <b>{(log.size / 1024).toFixed(1)} KB</b></span>
+                              <span>•</span>
+                              <span>Registos: <b>{log.itemCount || 0}</b></span>
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 sm:self-center">
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadSlotBackup(log.id, log.date)}
+                            className="p-1.5 bg-white hover:bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg transition-all cursor-pointer flex items-center gap-1 text-[10px] font-semibold"
+                            title="Descarregar ficheiro JSON de backup"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            JSON
+                          </button>
+                          
+                          <button
+                            type="button"
+                            disabled={currentRole !== "ADMIN"}
+                            onClick={() => handleRestoreFromSlot(log.id)}
+                            className={`p-1.5 border rounded-lg transition-all cursor-pointer flex items-center gap-1 text-[10px] font-bold ${
+                              currentRole === "ADMIN"
+                                ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-600 shadow-sm shadow-orange-500/10"
+                                : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-50"
+                            }`}
+                            title={currentRole === "ADMIN" ? "Restaurar banco de dados para este ponto" : "Requer perfil de Administrador"}
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            Restaurar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="border-t border-slate-100 pt-3 text-[10px] text-slate-400 italic flex items-center gap-1">
+                  <Shield className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>A restauração de qualquer backup substitui imediatamente os dados em execução no terminal offline.</span>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

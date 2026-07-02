@@ -26,6 +26,8 @@ export interface Product {
   brand?: string;
   weightBased?: boolean; // True if sold per kg
   barcode?: string;
+  branchStocks?: Record<string, number>; // Stock per branch ID
+  batches?: ProductBatch[]; // Batches associated with this product
 }
 
 export interface CartItem {
@@ -74,6 +76,10 @@ export interface Transaction {
   customerName?: string;
   customerId?: string;
   nuit?: string;
+  branchId?: string; // Associated branch ID
+  fiscalHash?: string; // AGT/MEF Fiscal Hash signature
+  fiscalKeys?: string; // Short sign key e.g. "D4-F5-G6-A2"
+  fiscalCertified?: boolean; // Certified indicator
 }
 
 export interface CashFlowEntry {
@@ -128,6 +134,7 @@ export interface SystemSettings {
   smtpPassword?: string;
   smtpSecure?: boolean;
   emailStockAlertsEnabled?: boolean;
+  isSmtpVerified?: boolean;
   slogan?: string;
   storeAddress?: string;
   storeContact?: string;
@@ -156,6 +163,8 @@ export interface SystemSettings {
   whatsappPhoneId?: string;
   managerWhatsappPhone?: string;
   alertsRecipientEmail?: string;
+  stockAlertEmailSubject?: string;
+  stockAlertEmailBody?: string;
   smsAlertsEnabled?: boolean;
   smsProviderType?: "TWILIO" | "CUSTOM_HTTP";
   smsTwilioSid?: string;
@@ -173,6 +182,48 @@ export interface SystemSettings {
   printerType?: "RECEIPT" | "LABEL";
   paperSize?: "A4" | "80MM" | "58MM";
   printerAutoCut?: boolean;
+  branches?: Branch[];
+  stockTransfers?: StockTransfer[];
+  batches?: ProductBatch[];
+  activeBranchId?: string;
+  fiscalCertificationNumber?: string;
+  fiscalLogoUrl?: string;
+  fiscalModeEnabled?: boolean;
+  inventoryStrategy?: "FIFO" | "LIFO" | "NORMAL";
+}
+
+export interface Branch {
+  id: string;
+  name: string;
+  address: string;
+  contact: string;
+  city?: string;
+  code?: string;
+}
+
+export interface StockTransfer {
+  id: string;
+  originBranchId: string;
+  destinationBranchId: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  timestamp: string;
+  status: "PENDING" | "COMPLETED" | "CANCELLED";
+  responsibleUser: string;
+}
+
+export interface ProductBatch {
+  id: string;
+  productId: string;
+  productName: string;
+  batchCode: string;
+  quantity: number;
+  initialQuantity: number;
+  expiryDate: string; // YYYY-MM-DD
+  costPrice: number;
+  receivedDate: string;
+  supplier?: string;
 }
 
 export interface MasterclassVideo {

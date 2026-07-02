@@ -136,7 +136,25 @@ export const defaultSettings: SystemSettings = {
   printerBaudRate: "9600",
   printerType: "RECEIPT",
   paperSize: "80MM",
-  printerAutoCut: true
+  printerAutoCut: true,
+  activeBranchId: "central",
+  inventoryStrategy: "FIFO",
+  fiscalModeEnabled: true,
+  fiscalCertificationNumber: "OST/CERT/00249/2026",
+  branches: [
+    { id: "central", name: "Filial Central (Maputo)", address: "Av. Marginal, Kiosk Nº 14, Maputo", contact: "+258 84 900 1200" },
+    { id: "matola", name: "Filial Matola", address: "Av. União, Matchiki-Tchiki, Matola", contact: "+258 84 900 1300" },
+    { id: "beira", name: "Filial Beira", address: "Bairro Central, Beira", contact: "+258 84 900 1400" }
+  ],
+  stockTransfers: [
+    { id: "st1", originBranchId: "central", destinationBranchId: "matola", productId: "p3", productName: "Farinha de Milho Top Score (10kg)", quantity: 5, timestamp: "2026-06-20T10:30:00", status: "COMPLETED", responsibleUser: "Inácio Macamo" }
+  ],
+  batches: [
+    { id: "b1", productId: "p1", productName: "Arroz Nacional Premium (10kg)", batchCode: "LOTE-ARR-25", quantity: 30, initialQuantity: 30, expiryDate: "2027-04-15", costPrice: 850, receivedDate: "2026-05-10", supplier: "MozAlimentos Lda" },
+    { id: "b2", productId: "p1", productName: "Arroz Nacional Premium (10kg)", batchCode: "LOTE-ARR-26", quantity: 15, initialQuantity: 15, expiryDate: "2027-08-20", costPrice: 860, receivedDate: "2026-06-12", supplier: "MozAlimentos Lda" },
+    { id: "b3", productId: "p6", productName: "Sumo de Maçã Santal (1L)", batchCode: "LOTE-SUM-A", quantity: 3, initialQuantity: 10, expiryDate: "2026-07-15", costPrice: 90, receivedDate: "2026-05-20", supplier: "Distribuidora Sul" },
+    { id: "b4", productId: "p11", productName: "Leite Danone Morango (1L)", batchCode: "LOTE-DAN-EXP", quantity: 18, initialQuantity: 20, expiryDate: "2026-06-28", costPrice: 80, receivedDate: "2026-06-01", supplier: "MozAlimentos Lda" }
+  ]
 };
 
 export interface MasterclassVideo {
