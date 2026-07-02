@@ -2573,13 +2573,39 @@ export default function StockModule({
 
             {/* List: Registered Batches Grid */}
             <div className="lg:col-span-2 bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-2 dark:border-zinc-800">
-                <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider dark:text-zinc-100">
-                  Histórico e Estado dos Lotes Registrados
-                </h4>
-                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-mono">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-slate-100 pb-3 dark:border-zinc-800">
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-sm dark:text-zinc-100">
+                    Gestão de Lotes & Rastreabilidade de Validades
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Acompanhamento rigoroso de lotes ativos de produtos perecíveis.</p>
+                </div>
+                <span className="self-start sm:self-auto text-[10px] font-extrabold px-2.5 py-1 rounded-full bg-orange-100 text-orange-700 font-mono">
                   {(settings?.batches || []).length} lotes ativos
                 </span>
+              </div>
+
+              {/* Subtitle / Legend */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-150 flex flex-wrap gap-4 items-center justify-between text-[10px] text-slate-600 dark:bg-zinc-950 dark:border-zinc-850 dark:text-zinc-400">
+                <span className="font-bold uppercase tracking-wider text-slate-500">Legenda de Validade:</span>
+                <div className="flex flex-wrap gap-3.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-green-500 border border-green-600"></span>
+                    <span className="font-semibold">Seguro (&gt; 3 Meses)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-450 border border-yellow-500"></span>
+                    <span className="font-semibold">Atenção (&lt; 1 Mês)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 border border-red-600 animate-pulse"></span>
+                    <span className="font-semibold">Vencido / Expirado</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-slate-500"></span>
+                    <span className="font-semibold">Intermediário (1-3 Meses)</span>
+                  </div>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -2587,12 +2613,12 @@ export default function StockModule({
                   <thead>
                     <tr className="border-b border-slate-100 text-[10px] font-bold uppercase text-slate-400 dark:border-zinc-800">
                       <th className="py-2.5">Produto</th>
-                      <th className="py-2.5">Lote</th>
-                      <th className="py-2.5 text-center">Quant. Atual</th>
-                      <th className="py-2.5 text-right">Preço</th>
-                      <th className="py-2.5 text-center">Validade</th>
-                      <th className="py-2.5 text-center">Estado</th>
-                      <th className="py-2.5 text-right">Ação</th>
+                      <th className="py-2.5">Código Lote</th>
+                      <th className="py-2.5 text-center bg-slate-50/50 dark:bg-zinc-900/30 text-orange-600 font-extrabold border-x border-slate-100/50 dark:border-zinc-800/50">Quantidade Restante</th>
+                      <th className="py-2.5 text-right px-2">Preço Custo</th>
+                      <th className="py-2.5 text-center bg-orange-50/30 dark:bg-amber-950/10 font-extrabold text-orange-700 border-x border-orange-100/30">Data de Validade</th>
+                      <th className="py-2.5 text-center">Estado / Prazo</th>
+                      <th className="py-2.5 text-right">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50 text-[11px] font-medium text-slate-650 dark:divide-zinc-800/50">
@@ -2608,34 +2634,77 @@ export default function StockModule({
                         const expiry = new Date(batch.expiryDate);
                         const daysLeft = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                         
-                        let badgeBg = "bg-green-50 text-green-700";
-                        let badgeText = "Em Dia";
+                        let badgeBg = "bg-slate-100 text-slate-700 border border-slate-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700";
+                        let badgeText = `${daysLeft} dias`;
+                        let dateTextClass = "text-slate-600 dark:text-zinc-350";
+                        let dotColor = "bg-slate-400";
+
                         if (daysLeft < 0) {
-                          badgeBg = "bg-red-50 text-red-700";
-                          badgeText = "Expirado";
+                          // vermelho vencido
+                          badgeBg = "bg-red-100 text-red-800 border border-red-300 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900";
+                          badgeText = "EXPIRED";
+                          dateTextClass = "text-red-650 font-bold dark:text-red-450";
+                          dotColor = "bg-red-550 animate-pulse";
                         } else if (daysLeft <= 30) {
-                          badgeBg = "bg-amber-50 text-amber-700";
+                          // amarelo < 1 mês
+                          badgeBg = "bg-yellow-100 text-yellow-800 border border-yellow-350 dark:bg-yellow-950/40 dark:text-yellow-300 dark:border-yellow-900";
+                          badgeText = `CRÍTICO: ${daysLeft}d`;
+                          dateTextClass = "text-yellow-750 font-semibold dark:text-yellow-500";
+                          dotColor = "bg-yellow-500";
+                        } else if (daysLeft > 90) {
+                          // verde > 3 meses
+                          badgeBg = "bg-green-100 text-green-800 border border-green-300 dark:bg-green-950/40 dark:text-green-300 dark:border-green-900";
+                          badgeText = `SEGURO: ${daysLeft}d`;
+                          dateTextClass = "text-green-700 dark:text-green-400";
+                          dotColor = "bg-green-500";
+                        } else {
+                          // Intermediário (1-3 meses)
+                          badgeBg = "bg-slate-50 text-slate-700 border border-slate-200 dark:bg-zinc-850 dark:text-zinc-350 dark:border-zinc-800";
                           badgeText = `${daysLeft} dias`;
+                          dotColor = "bg-slate-400";
                         }
 
+                        // Low quantity warning indicator
+                        const isLowQty = batch.quantity <= batch.initialQuantity * 0.15;
+
                         return (
-                          <tr key={batch.id} className="hover:bg-slate-50/50 transition">
+                          <tr key={batch.id} className="hover:bg-slate-50/50 transition dark:hover:bg-zinc-850/40">
                             <td className="py-2.5 font-bold text-slate-800 dark:text-zinc-200">{batch.productName}</td>
-                            <td className="py-2.5 font-mono text-xs">{batch.batchCode}</td>
-                            <td className="py-2.5 text-center font-bold">
-                              {batch.quantity} <span className="text-slate-400 text-[10px] font-normal">/ {batch.initialQuantity}</span>
+                            <td className="py-2.5 font-mono text-xs text-slate-500">{batch.batchCode}</td>
+                            
+                            {/* Highlight: Quantidade Restante */}
+                            <td className="py-2.5 text-center font-bold bg-slate-50/40 dark:bg-zinc-900/10 border-x border-slate-100/50 dark:border-zinc-800/50">
+                              <div className="flex flex-col items-center justify-center gap-1">
+                                <span className={isLowQty ? "text-red-650 font-black animate-pulse" : "text-slate-800 dark:text-zinc-200"}>
+                                  {batch.quantity} <span className="text-slate-400 text-[9px] font-normal">/ {batch.initialQuantity} un</span>
+                                </span>
+                                <div className="w-16 bg-slate-100 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                                  <div 
+                                    className={`h-full ${isLowQty ? 'bg-red-500' : 'bg-orange-500'}`} 
+                                    style={{ width: `${Math.min(100, (batch.quantity / batch.initialQuantity) * 100)}%` }} 
+                                  />
+                                </div>
+                              </div>
                             </td>
-                            <td className="py-2.5 text-right font-mono font-bold text-slate-700 dark:text-zinc-300">
+
+                            <td className="py-2.5 text-right font-mono font-bold text-slate-700 dark:text-zinc-300 px-2">
                               {batch.costPrice.toLocaleString()} MT
                             </td>
-                            <td className="py-2.5 text-center font-mono font-bold">
-                              {new Date(batch.expiryDate).toLocaleDateString()}
+
+                            {/* Highlight: Data de Validade */}
+                            <td className={`py-2.5 text-center font-mono font-bold bg-orange-50/20 dark:bg-amber-950/5 border-x border-orange-100/20 ${dateTextClass}`}>
+                              <div className="flex items-center justify-center gap-1.5">
+                                <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+                                <span>{new Date(batch.expiryDate).toLocaleDateString("pt-MZ", { day: "2-digit", month: "2-digit", year: "numeric" })}</span>
+                              </div>
                             </td>
+
                             <td className="py-2.5 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide uppercase ${badgeBg}`}>
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-black tracking-wide uppercase ${badgeBg}`}>
                                 {badgeText}
                               </span>
                             </td>
+
                             <td className="py-2.5 text-right">
                               <button
                                 onClick={() => {
@@ -2648,9 +2717,9 @@ export default function StockModule({
                                     "STOCK",
                                     `Lote ${batch.batchCode} de ${batch.productName} excluído do sistema por operador.`
                                   );
-                                  if (onShowToast) onShowToast(`Lote ${batch.batchCode} removido.`, "info");
+                                  if (onShowToast) onShowToast(`Lote ${batch.batchCode} removido com sucesso.`, "info");
                                 }}
-                                className="p-1 hover:bg-red-50 rounded-lg text-red-500 hover:text-red-700 transition cursor-pointer"
+                                className="p-1 hover:bg-red-50 rounded-lg text-red-500 hover:text-red-700 transition cursor-pointer dark:hover:bg-red-950/30"
                                 title="Remover este lote"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />

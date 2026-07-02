@@ -190,6 +190,11 @@ export interface SystemSettings {
   fiscalLogoUrl?: string;
   fiscalModeEnabled?: boolean;
   inventoryStrategy?: "FIFO" | "LIFO" | "NORMAL";
+  expiryAlertDays?: number;
+  expiryAlertsEnabled?: boolean;
+  expiryNotificationMethod?: "EMAIL" | "SMS" | "BOTH";
+  expiryEmailSubject?: string;
+  expiryEmailBody?: string;
 }
 
 export interface Branch {

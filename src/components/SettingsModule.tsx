@@ -31,7 +31,9 @@ import {
   Tag,
   Camera,
   Sparkles,
-  Image
+  Image,
+  Layers,
+  Bell
 } from "lucide-react";
 import { SystemSettings, UserRole, Employee } from "../types";
 import { initAuth, googleSignIn, logout, getAccessToken, getLogsFromFirestore } from "../lib/firebase";
@@ -122,6 +124,18 @@ export default function SettingsModule({
   const [isSmtpVerified, setIsSmtpVerified] = useState(settings.isSmtpVerified || false);
   const [testRecipient, setTestRecipient] = useState(settings.alertsRecipientEmail || settings.reportRecipientEmail || "");
   const [isTestingSmtp, setIsTestingSmtp] = useState(false);
+
+  // Expiry and Batches states
+  const [inventoryStrategy, setInventoryStrategy] = useState<"FIFO" | "LIFO" | "NORMAL">(settings.inventoryStrategy || "FIFO");
+  const [expiryAlertDays, setExpiryAlertDays] = useState<number>(settings.expiryAlertDays || 30);
+  const [expiryAlertsEnabled, setExpiryAlertsEnabled] = useState<boolean>(settings.expiryAlertsEnabled || false);
+  const [expiryNotificationMethod, setExpiryNotificationMethod] = useState<"EMAIL" | "SMS" | "BOTH">(settings.expiryNotificationMethod || "EMAIL");
+  const [expiryEmailSubject, setExpiryEmailSubject] = useState(
+    settings.expiryEmailSubject || "[ALERTA] Vencimento de Produtos - OST Vendas"
+  );
+  const [expiryEmailBody, setExpiryEmailBody] = useState(
+    settings.expiryEmailBody || `Olá,\n\nEste é um alerta automático de que os seguintes lotes/produtos perecíveis estão próximos do vencimento ou já venceram:\n\n[LISTA_VENCIMENTOS]\n\nPor favor, retire de circulação ou providencie que sejam consumidos com base na política configurada.\n\nAtenciosamente,\nSistema OST Vendas`
+  );
   
   // Custom states for dispatcher details
   const [reportFormat, setReportFormat] = useState<"PDF" | "CSV" | "AMBOS">("PDF");
@@ -373,7 +387,7 @@ export default function SettingsModule({
   const [simulationLogs, setSimulationLogs] = useState<string[]>([]);
 
   // NEW Backup and Recovery tab states
-  const [activeSubTab, setActiveSubTab] = useState<"geral" | "backup">("geral");
+  const [activeSubTab, setActiveSubTab] = useState<"geral" | "backup" | "lotes">("geral");
   const [localBackupsLog, setLocalBackupsLog] = useState<any[]>([]);
 
   const loadLocalBackupsLog = () => {
@@ -966,6 +980,13 @@ export default function SettingsModule({
     setPrinterType(settings.printerType || "RECEIPT");
     setPaperSize(settings.paperSize || "80MM");
     setPrinterAutoCut(settings.printerAutoCut !== undefined ? settings.printerAutoCut : true);
+
+    if (settings.inventoryStrategy) setInventoryStrategy(settings.inventoryStrategy);
+    if (settings.expiryAlertDays !== undefined) setExpiryAlertDays(settings.expiryAlertDays);
+    if (settings.expiryAlertsEnabled !== undefined) setExpiryAlertsEnabled(settings.expiryAlertsEnabled);
+    if (settings.expiryNotificationMethod) setExpiryNotificationMethod(settings.expiryNotificationMethod);
+    if (settings.expiryEmailSubject) setExpiryEmailSubject(settings.expiryEmailSubject);
+    if (settings.expiryEmailBody) setExpiryEmailBody(settings.expiryEmailBody);
   }, [settings]);
 
   useEffect(() => {
@@ -1773,9 +1794,21 @@ export default function SettingsModule({
           <Database className="w-4 h-4" />
           Backup e Recuperação
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("lotes")}
+          className={`px-5 py-3 font-bold text-xs transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
+            activeSubTab === "lotes"
+              ? "border-orange-500 text-orange-600 font-extrabold"
+              : "border-transparent text-slate-500 hover:text-slate-850 hover:border-slate-300"
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          Lotes & Validades
+        </button>
       </div>
 
-      {activeSubTab === "geral" ? (
+      {activeSubTab === "geral" && (
         <div className="space-y-6 animate-in fade-in-50 duration-150">
           {/* 10-THEME COLOR PALETTE SELECTION FOR EACH OPERATOR */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
@@ -4343,7 +4376,9 @@ export default function SettingsModule({
         </form>
       </div>
       </div>
-      ) : (
+      )}
+
+      {activeSubTab === "backup" && (
         <div className="space-y-6 animate-in fade-in duration-200">
           {/* Header Card */}
           <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 shadow-lg space-y-3">
@@ -4547,6 +4582,282 @@ export default function SettingsModule({
                   <Shield className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   <span>A restauração de qualquer backup substitui imediatamente os dados em execução no terminal offline.</span>
                 </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === "lotes" && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Header Card */}
+          <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 shadow-lg space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="bg-orange-500 text-slate-950 p-2.5 rounded-xl shrink-0">
+                <Layers className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-white text-base">Controle de Lotes & Alertas de Validade</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Defina a política de consumo de estoque (FIFO/LIFO) e gerencie as notificações de vencimento para produtos perecíveis.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Col 1: Strategy & Expiry settings */}
+            <div className="lg:col-span-2 space-y-6">
+              
+              {/* Card 1: Consumo de Lotes */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-2.5 text-slate-800 border-b border-slate-100 pb-3">
+                  <Layers className="w-5 h-5 text-orange-500" />
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-sm">Estratégia de Consumo de Estoque</h4>
+                    <p className="text-[11px] text-slate-400">Determine como o sistema priorizará a saída automática dos lotes no checkout.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Option FIFO */}
+                    <button
+                      type="button"
+                      onClick={() => setInventoryStrategy("FIFO")}
+                      className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between h-32 ${
+                        inventoryStrategy === "FIFO"
+                          ? "border-orange-500 bg-orange-50/20 ring-1 ring-orange-500"
+                          : "border-slate-200 hover:border-slate-350 bg-white"
+                      }`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className="font-bold text-xs text-slate-800">FIFO (PEPS)</span>
+                        <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${inventoryStrategy === "FIFO" ? "border-orange-500" : "border-slate-300"}`}>
+                          {inventoryStrategy === "FIFO" && <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold text-orange-700 uppercase">First-In, First-Out</p>
+                        <p className="text-[10px] text-slate-400 mt-1 leading-snug">Vende primeiro o lote com validade mais próxima do vencimento.</p>
+                      </div>
+                    </button>
+
+                    {/* Option LIFO */}
+                    <button
+                      type="button"
+                      onClick={() => setInventoryStrategy("LIFO")}
+                      className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between h-32 ${
+                        inventoryStrategy === "LIFO"
+                          ? "border-orange-500 bg-orange-50/20 ring-1 ring-orange-500"
+                          : "border-slate-200 hover:border-slate-350 bg-white"
+                      }`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className="font-bold text-xs text-slate-800">LIFO (UEPS)</span>
+                        <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${inventoryStrategy === "LIFO" ? "border-orange-500" : "border-slate-300"}`}>
+                          {inventoryStrategy === "LIFO" && <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold text-orange-700 uppercase">Last-In, First-Out</p>
+                        <p className="text-[10px] text-slate-400 mt-1 leading-snug">Prioriza a saída do lote recebido mais recentemente no estoque.</p>
+                      </div>
+                    </button>
+
+                    {/* Option NORMAL */}
+                    <button
+                      type="button"
+                      onClick={() => setInventoryStrategy("NORMAL")}
+                      className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between h-32 ${
+                        inventoryStrategy === "NORMAL"
+                          ? "border-orange-500 bg-orange-50/20 ring-1 ring-orange-500"
+                          : "border-slate-200 hover:border-slate-350 bg-white"
+                      }`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className="font-bold text-xs text-slate-800">Sem Lote (Geral)</span>
+                        <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${inventoryStrategy === "NORMAL" ? "border-orange-500" : "border-slate-300"}`}>
+                          {inventoryStrategy === "NORMAL" && <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold text-orange-700 uppercase">Padrão Simples</p>
+                        <p className="text-[10px] text-slate-400 mt-1 leading-snug">Deduz o estoque do produto de forma global, ignorando especificações de lote.</p>
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 border border-slate-150 rounded-xl text-[10px] text-slate-500 leading-relaxed">
+                    💡 <b>Impacto Operacional:</b> A alteração da estratégia afeta o motor de abate do POS e as sugestões de triagem de estoque no painel do operador. O <b>FIFO</b> é altamente recomendado para negócios com produtos perecíveis (alimentação, farmacêutica).
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: Alertas de Vencimento */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2.5 text-slate-800">
+                    <Bell className="w-5 h-5 text-orange-500" />
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-sm">Configuração de Alertas de Vencimento</h4>
+                      <p className="text-[11px] text-slate-400">Ative avisos preventivos para produtos que se aproximam do fim da validade.</p>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={expiryAlertsEnabled}
+                      onChange={(e) => setExpiryAlertsEnabled(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-10 h-5 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500"></div>
+                  </label>
+                </div>
+
+                {expiryAlertsEnabled && (
+                  <div className="space-y-4 animate-in slide-in-from-top-1 duration-150">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      
+                      {/* Alert days threshold */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Janela de Alerta Prévio (Dias)</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="1"
+                            max="365"
+                            value={expiryAlertDays}
+                            onChange={(e) => setExpiryAlertDays(Math.max(1, parseInt(e.target.value) || 0))}
+                            className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold w-24 focus:bg-white focus:border-orange-500 outline-none"
+                          />
+                          <span className="text-xs text-slate-500">dias antes do vencimento</span>
+                        </div>
+                      </div>
+
+                      {/* Notification channel selection */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Canal de Notificação</label>
+                        <select
+                          value={expiryNotificationMethod}
+                          onChange={(e) => setExpiryNotificationMethod(e.target.value as any)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-xs text-slate-700 outline-none focus:bg-white focus:border-orange-500 cursor-pointer"
+                        >
+                          <option value="EMAIL">📧 Enviar apenas por Email (SMTP)</option>
+                          <option value="SMS">💬 Enviar apenas por SMS (Gateway)</option>
+                          <option value="BOTH">🔄 Enviar por Ambos (Email e SMS)</option>
+                        </select>
+                      </div>
+
+                    </div>
+
+                    {/* Email content configuration */}
+                    {(expiryNotificationMethod === "EMAIL" || expiryNotificationMethod === "BOTH") && (
+                      <div className="space-y-3.5 border-t border-slate-100 pt-4.5 animate-in fade-in">
+                        <h5 className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1">
+                          <span>📋</span> Template de Alerta por Email
+                        </h5>
+                        
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Assunto do Email</label>
+                          <input
+                            type="text"
+                            value={expiryEmailSubject}
+                            onChange={(e) => setExpiryEmailSubject(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold outline-none focus:bg-white focus:border-orange-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Corpo da Mensagem</label>
+                          <textarea
+                            rows={5}
+                            value={expiryEmailBody}
+                            onChange={(e) => setExpiryEmailBody(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-mono outline-none focus:bg-white focus:border-orange-500"
+                          />
+                          <p className="text-[9px] text-slate-400">
+                            Use a tag <code>[LISTA_VENCIMENTOS]</code> para injetar automaticamente a lista de lotes e produtos próximos da expiração.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+            </div>
+
+            {/* Col 2: Action details & active inventory preview */}
+            <div className="space-y-6">
+              
+              {/* Save Settings Action Button */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm text-center space-y-4">
+                <div className="bg-orange-100 text-orange-600 p-3 rounded-full w-12 h-12 mx-auto flex items-center justify-center">
+                  <CheckCircle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wide">Gravar Alterações</h4>
+                  <p className="text-xs text-slate-400 mt-1">Garante que todas as estratégias operacionais e notificações sejam aplicadas imediatamente.</p>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    onUpdateSettings({
+                      inventoryStrategy,
+                      expiryAlertsEnabled,
+                      expiryAlertDays,
+                      expiryNotificationMethod,
+                      expiryEmailSubject,
+                      expiryEmailBody
+                    });
+
+                    onAddAuditLog(
+                      "Definições de Lotes e Validades",
+                      "CONFIGURAÇÕES",
+                      `Parâmetros atualizados: Estratégia=${inventoryStrategy}, Alertas=${expiryAlertsEnabled ? 'Sim' : 'Não'} (${expiryAlertDays} dias).`
+                    );
+
+                    if (onShowToast) {
+                      onShowToast("Configurações de lotes e validades salvas com sucesso!", "success");
+                    }
+                  }}
+                  className="w-full py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs transition shadow-md shadow-orange-500/10 cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  Gravar Parâmetros de Lotes
+                </button>
+              </div>
+
+              {/* Status card preview: Perecíveis no inventário */}
+              <div className="bg-slate-50 p-6 rounded-2xl border border-slate-150 space-y-4">
+                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wide flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-orange-500" />
+                  Informações de Lotes Atuais
+                </h4>
+                
+                <div className="space-y-3 font-mono text-slate-650 text-[11px]">
+                  <div className="flex justify-between border-b border-dashed border-slate-200 pb-1.5">
+                    <span>Lotes Totais:</span>
+                    <span className="font-bold text-slate-800">{(settings.batches || []).length} lotes</span>
+                  </div>
+                  <div className="flex justify-between border-b border-dashed border-slate-200 pb-1.5">
+                    <span>Produtos Loteados:</span>
+                    <span className="font-bold text-slate-800">
+                      {new Set((settings.batches || []).map(b => b.productId)).size} produtos
+                    </span>
+                  </div>
+                  <div className="flex justify-between pb-1.5">
+                    <span>Estratégia no POS:</span>
+                    <span className="font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded text-[10px]">
+                      {settings.inventoryStrategy || "FIFO"}
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-slate-400 leading-relaxed italic">
+                  * Os lotes e validades podem ser cadastrados e ajustados diretamente através da aba "Lotes, Validades & FIFO" no módulo de Controle de Estoque.
+                </p>
               </div>
 
             </div>
